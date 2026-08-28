@@ -1,6 +1,6 @@
-# 重部署流水线：把某个已发布版本重新部署到服务器（不重新构建）。
+# 部署流水线：把手动选择的已发布版本部署到服务器（不重新构建）。
 # 两个入口：平台「在线更新」弹窗（后端调 workflow_dispatch API）与 GitHub 页面手动触发。
-# 直接下载 release.yml 存档在 GitHub Release 的镜像 tar 并校验 sha256，走同一个蓝绿接收端。
+# 下载 release.yml 存档在 GitHub Release 的镜像 tar 并校验 sha256，再执行蓝绿切换。
 name: Deploy
 
 on:

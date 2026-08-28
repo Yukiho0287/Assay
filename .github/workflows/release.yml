@@ -1,6 +1,6 @@
 # 发布流水线：人在 main 上打 tag vX.Y.Z 触发（唯一发布闸门）。
 # 构建 linux/amd64 单二进制（内嵌前端、ldflags 注入版本号）→ 打成 docker 镜像 →
-# GitHub Release 存档镜像 tar → SSH 推送服务器（docker load + 蓝绿切换，见 deploy/deploy-receive.sh）。
+# GitHub Release 存档镜像 tar。部署须通过平台「在线更新」或 deploy.yml 手动触发。
 name: Release
 
 on:
@@ -71,20 +71,3 @@ jobs:
             --title "$GITHUB_REF_NAME" --generate-notes \
             "assay-${GITHUB_REF_NAME}-image.tar.gz" \
             "assay-${GITHUB_REF_NAME}-image.tar.gz.sha256"
-
-      - name: 部署到服务器（蓝绿切换）
-        env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
-          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          sum=$(cut -d' ' -f1 "assay-${GITHUB_REF_NAME}-image.tar.gz.sha256")
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
-            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o IdentitiesOnly=yes \
-            "root@$DEPLOY_HOST" "deploy $GITHUB_REF_NAME $sum" \
-            < "assay-${GITHUB_REF_NAME}-image.tar.gz"
