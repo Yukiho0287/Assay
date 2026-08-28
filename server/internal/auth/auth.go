@@ -56,10 +56,15 @@ func EnsureAdmin(ctx context.Context, q *db.Queries, log *slog.Logger, envPasswo
 	if err != nil {
 		return fmt.Errorf("哈希初始密码: %w", err)
 	}
+	// 初始管理员绑定内置 admin 角色（迁移 0002 保证其存在，查不到即 Fail-Fast）
+	adminRole, err := q.GetRoleByName(ctx, "admin")
+	if err != nil {
+		return fmt.Errorf("查询内置 admin 角色: %w", err)
+	}
 	if _, err := q.CreateUser(ctx, db.CreateUserParams{
 		Username:     "admin",
 		PasswordHash: string(hash),
-		Role:         "admin",
+		RoleID:       adminRole.ID,
 	}); err != nil {
 		return fmt.Errorf("创建初始管理员: %w", err)
 	}

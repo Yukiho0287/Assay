@@ -11,9 +11,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { authApi, RequestError } from '@/lib/api'
+import { useI18n } from '@/lib/i18n'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const { t } = useI18n()
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
 
@@ -26,7 +28,7 @@ export default function LoginPage() {
       await authApi.login(String(form.get('username') ?? ''), String(form.get('password') ?? ''))
       navigate('/', { replace: true })
     } catch (err) {
-      setError(err instanceof RequestError ? err.message : '网络错误，请重试')
+      setError(err instanceof RequestError ? err.message : t('login.networkError'))
     } finally {
       setPending(false)
     }
@@ -37,16 +39,16 @@ export default function LoginPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-xl">Assay</CardTitle>
-          <CardDescription>LLM 渠道检测平台，请登录</CardDescription>
+          <CardDescription>{t('login.desc')}</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="grid gap-4" onSubmit={handleSubmit}>
             <div className="grid gap-2">
-              <Label htmlFor="username">用户名</Label>
+              <Label htmlFor="username">{t('login.username')}</Label>
               <Input id="username" name="username" autoComplete="username" required />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="password">密码</Label>
+              <Label htmlFor="password">{t('login.password')}</Label>
               <Input
                 id="password"
                 name="password"
@@ -57,7 +59,7 @@ export default function LoginPage() {
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" className="w-full" disabled={pending}>
-              {pending ? '登录中…' : '登录'}
+              {pending ? t('login.pending') : t('login.submit')}
             </Button>
           </form>
         </CardContent>

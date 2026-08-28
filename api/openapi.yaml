@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Assay API
   description: LLM 渠道检测平台 API。本文件是前后端契约的唯一真相源（契约优先）。
-  version: 0.1.0
+  version: 0.2.0
 servers:
   - url: /api
 paths:
@@ -67,7 +67,7 @@ paths:
   /auth/me:
     get:
       operationId: getCurrentUser
-      summary: 获取当前登录用户
+      summary: 获取当前登录用户（含角色与模块权限）
       tags: [auth]
       responses:
         "200":
@@ -77,12 +77,297 @@ paths:
               schema:
                 $ref: "#/components/schemas/CurrentUser"
         "401":
-          description: 未登录或会话已过期
+          $ref: "#/components/responses/Unauthorized"
+  /auth/password:
+    put:
+      operationId: changeOwnPassword
+      summary: 修改自己的密码（需验证当前密码，成功后注销其他会话）
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: 修改成功
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /users:
+    get:
+      operationId: listUsers
+      summary: 用户列表（需 users 权限）
+      tags: [users]
+      responses:
+        "200":
+          description: 全部用户
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createUser
+      summary: 创建用户（需 users 权限；不开放注册，账号只能在此创建）
+      tags: [users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreate"
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: 用户名已存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /users/{id}:
+    patch:
+      operationId: updateUser
+      summary: 修改用户角色或重置密码（需 users 权限；不能改自己的角色）
+      tags: [users]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: 修改后的用户
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteUser
+      summary: 删除用户（需 users 权限；不能删除自己）
+      tags: [users]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "204":
+          description: 删除成功
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /roles:
+    get:
+      operationId: listRoles
+      summary: 角色列表（需 users 权限）
+      tags: [roles]
+      responses:
+        "200":
+          description: 全部角色
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Role"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createRole
+      summary: 创建角色（需 users 权限）
+      tags: [roles]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleCreate"
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: 角色名已存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /roles/{id}:
+    patch:
+      operationId: updateRole
+      summary: 修改角色名或权限（需 users 权限；内置角色不可修改）
+      tags: [roles]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleUpdate"
+      responses:
+        "200":
+          description: 修改后的角色
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteRole
+      summary: 删除角色（需 users 权限；内置角色与仍被使用的角色不可删除）
+      tags: [roles]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "204":
+          description: 删除成功
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: 角色仍被用户使用
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /system/update:
+    get:
+      operationId: getUpdateStatus
+      summary: 检查在线更新（需 system 权限；查询 GitHub 最新 Release）
+      tags: [system]
+      responses:
+        "200":
+          description: 当前版本与最新版本信息
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "502":
+          description: GitHub API 请求失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /system/update/deploy:
+    post:
+      operationId: triggerDeploy
+      summary: 触发在线更新（需 system 权限；调 GitHub Actions 重新部署指定版本）
+      tags: [system]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeployRequest"
+      responses:
+        "202":
+          description: 已触发部署流水线，稍后轮询 /version 确认切换
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "502":
+          description: GitHub API 请求失败
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
 components:
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    BadRequest:
+      description: 请求非法
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: 未登录或会话已过期
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: 无权访问该模块
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
     Health:
       type: object
@@ -107,9 +392,34 @@ components:
         password:
           type: string
           minLength: 1
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          minLength: 1
+        newPassword:
+          type: string
+          minLength: 8
+    PermissionMap:
+      description: 粗粒度模块权限开关：控制对应页面与该模块全部接口的访问
+      type: object
+      required: [channels, quality, stability, users, system]
+      properties:
+        channels:
+          type: boolean
+        quality:
+          type: boolean
+        stability:
+          type: boolean
+        users:
+          type: boolean
+        system:
+          type: boolean
     CurrentUser:
       type: object
-      required: [id, username, role]
+      required: [id, username, role, permissions]
       properties:
         id:
           type: string
@@ -118,7 +428,106 @@ components:
           type: string
         role:
           type: string
-          enum: [admin, member]
+        permissions:
+          $ref: "#/components/schemas/PermissionMap"
+    User:
+      type: object
+      required: [id, username, roleId, roleName, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        roleId:
+          type: string
+          format: uuid
+        roleName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    UserCreate:
+      type: object
+      required: [username, password, roleId]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+        password:
+          type: string
+          minLength: 8
+        roleId:
+          type: string
+          format: uuid
+    UserUpdate:
+      type: object
+      properties:
+        roleId:
+          type: string
+          format: uuid
+        password:
+          type: string
+          minLength: 8
+    Role:
+      type: object
+      required: [id, name, builtIn, permissions]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        builtIn:
+          type: boolean
+        permissions:
+          $ref: "#/components/schemas/PermissionMap"
+    RoleCreate:
+      type: object
+      required: [name, permissions]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        permissions:
+          $ref: "#/components/schemas/PermissionMap"
+    RoleUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        permissions:
+          $ref: "#/components/schemas/PermissionMap"
+    UpdateStatus:
+      type: object
+      required: [currentVersion, tokenConfigured, updateAvailable]
+      properties:
+        currentVersion:
+          type: string
+        tokenConfigured:
+          description: 服务器是否配置了 GitHub Token（未配置时无法检查/触发更新）
+          type: boolean
+        updateAvailable:
+          type: boolean
+        latestVersion:
+          type: string
+        releaseNotes:
+          type: string
+        publishedAt:
+          type: string
+          format: date-time
+    DeployRequest:
+      type: object
+      required: [tag]
+      properties:
+        tag:
+          description: 要部署的版本 tag（须是已存在的 GitHub Release）
+          type: string
+          pattern: "^v[0-9][A-Za-z0-9.+~-]*$"
     Error:
       type: object
       required: [error]

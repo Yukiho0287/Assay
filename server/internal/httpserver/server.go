@@ -15,6 +15,7 @@ import (
 
 	"github.com/Yukiho0287/assay/server/internal/api"
 	"github.com/Yukiho0287/assay/server/internal/db"
+	"github.com/Yukiho0287/assay/server/internal/update"
 	"github.com/Yukiho0287/assay/server/internal/web"
 )
 
@@ -23,9 +24,9 @@ type Server struct {
 	log  *slog.Logger
 }
 
-func New(addr string, log *slog.Logger, pool *pgxpool.Pool) *Server {
+func New(addr string, log *slog.Logger, pool *pgxpool.Pool, gh *update.Client) *Server {
 	mux := http.NewServeMux()
-	h := &handlers{log: log, q: db.New(pool)}
+	h := &handlers{log: log, q: db.New(pool), gh: gh}
 	api.HandlerFromMuxWithBaseURL(h, mux, "/api")
 	if wh := web.Handler(); wh != nil {
 		// 发布构建内嵌前端：非 /api 路径全部交给 SPA

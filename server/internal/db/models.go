@@ -10,6 +10,14 @@ import (
 	"github.com/google/uuid"
 )
 
+type Role struct {
+	ID          uuid.UUID
+	Name        string
+	BuiltIn     bool
+	Permissions []byte
+	CreatedAt   time.Time
+}
+
 type Session struct {
 	TokenHash []byte
 	UserID    uuid.UUID
@@ -21,6 +29,6 @@ type User struct {
 	ID           uuid.UUID
 	Username     string
 	PasswordHash string
-	Role         string
 	CreatedAt    time.Time
+	RoleID       uuid.UUID
 }

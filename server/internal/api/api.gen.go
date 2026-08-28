@@ -8,27 +8,11 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"time"
 
+	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
-
-// Defines values for CurrentUserRole.
-const (
-	Admin  CurrentUserRole = "admin"
-	Member CurrentUserRole = "member"
-)
-
-// Valid indicates whether the value is a known member of the CurrentUserRole enum.
-func (e CurrentUserRole) Valid() bool {
-	switch e {
-	case Admin:
-		return true
-	case Member:
-		return true
-	default:
-		return false
-	}
-}
 
 // Defines values for HealthStatus.
 const (
@@ -45,15 +29,27 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
-// CurrentUser defines model for CurrentUser.
-type CurrentUser struct {
-	Id       openapi_types.UUID `json:"id"`
-	Role     CurrentUserRole    `json:"role"`
-	Username string             `json:"username"`
+// ChangePasswordRequest defines model for ChangePasswordRequest.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
 }
 
-// CurrentUserRole defines model for CurrentUser.Role.
-type CurrentUserRole string
+// CurrentUser defines model for CurrentUser.
+type CurrentUser struct {
+	Id openapi_types.UUID `json:"id"`
+
+	// Permissions 粗粒度模块权限开关：控制对应页面与该模块全部接口的访问
+	Permissions PermissionMap `json:"permissions"`
+	Role        string        `json:"role"`
+	Username    string        `json:"username"`
+}
+
+// DeployRequest defines model for DeployRequest.
+type DeployRequest struct {
+	// Tag 要部署的版本 tag（须是已存在的 GitHub Release）
+	Tag string `json:"tag"`
+}
 
 // Error defines model for Error.
 type Error struct {
@@ -74,13 +70,115 @@ type LoginRequest struct {
 	Username string `json:"username"`
 }
 
+// PermissionMap 粗粒度模块权限开关：控制对应页面与该模块全部接口的访问
+type PermissionMap struct {
+	Channels  bool `json:"channels"`
+	Quality   bool `json:"quality"`
+	Stability bool `json:"stability"`
+	System    bool `json:"system"`
+	Users     bool `json:"users"`
+}
+
+// Role defines model for Role.
+type Role struct {
+	BuiltIn bool               `json:"builtIn"`
+	Id      openapi_types.UUID `json:"id"`
+	Name    string             `json:"name"`
+
+	// Permissions 粗粒度模块权限开关：控制对应页面与该模块全部接口的访问
+	Permissions PermissionMap `json:"permissions"`
+}
+
+// RoleCreate defines model for RoleCreate.
+type RoleCreate struct {
+	Name string `json:"name"`
+
+	// Permissions 粗粒度模块权限开关：控制对应页面与该模块全部接口的访问
+	Permissions PermissionMap `json:"permissions"`
+}
+
+// RoleUpdate defines model for RoleUpdate.
+type RoleUpdate struct {
+	Name *string `json:"name,omitempty"`
+
+	// Permissions 粗粒度模块权限开关：控制对应页面与该模块全部接口的访问
+	Permissions *PermissionMap `json:"permissions,omitempty"`
+}
+
+// UpdateStatus defines model for UpdateStatus.
+type UpdateStatus struct {
+	CurrentVersion string     `json:"currentVersion"`
+	LatestVersion  *string    `json:"latestVersion,omitempty"`
+	PublishedAt    *time.Time `json:"publishedAt,omitempty"`
+	ReleaseNotes   *string    `json:"releaseNotes,omitempty"`
+
+	// TokenConfigured 服务器是否配置了 GitHub Token（未配置时无法检查/触发更新）
+	TokenConfigured bool `json:"tokenConfigured"`
+	UpdateAvailable bool `json:"updateAvailable"`
+}
+
+// User defines model for User.
+type User struct {
+	CreatedAt time.Time          `json:"createdAt"`
+	Id        openapi_types.UUID `json:"id"`
+	RoleId    openapi_types.UUID `json:"roleId"`
+	RoleName  string             `json:"roleName"`
+	Username  string             `json:"username"`
+}
+
+// UserCreate defines model for UserCreate.
+type UserCreate struct {
+	Password string             `json:"password"`
+	RoleId   openapi_types.UUID `json:"roleId"`
+	Username string             `json:"username"`
+}
+
+// UserUpdate defines model for UserUpdate.
+type UserUpdate struct {
+	Password *string             `json:"password,omitempty"`
+	RoleId   *openapi_types.UUID `json:"roleId,omitempty"`
+}
+
 // VersionInfo defines model for VersionInfo.
 type VersionInfo struct {
 	Version string `json:"version"`
 }
 
+// IdPath defines model for IdPath.
+type IdPath = openapi_types.UUID
+
+// BadRequest defines model for BadRequest.
+type BadRequest = Error
+
+// Forbidden defines model for Forbidden.
+type Forbidden = Error
+
+// NotFound defines model for NotFound.
+type NotFound = Error
+
+// Unauthorized defines model for Unauthorized.
+type Unauthorized = Error
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
+
+// ChangeOwnPasswordJSONRequestBody defines body for ChangeOwnPassword for application/json ContentType.
+type ChangeOwnPasswordJSONRequestBody = ChangePasswordRequest
+
+// CreateRoleJSONRequestBody defines body for CreateRole for application/json ContentType.
+type CreateRoleJSONRequestBody = RoleCreate
+
+// UpdateRoleJSONRequestBody defines body for UpdateRole for application/json ContentType.
+type UpdateRoleJSONRequestBody = RoleUpdate
+
+// TriggerDeployJSONRequestBody defines body for TriggerDeploy for application/json ContentType.
+type TriggerDeployJSONRequestBody = DeployRequest
+
+// CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
+type CreateUserJSONRequestBody = UserCreate
+
+// UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
+type UpdateUserJSONRequestBody = UserUpdate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -90,12 +188,45 @@ type ServerInterface interface {
 	// Logout 登出，销毁当前会话
 	// (POST /auth/logout)
 	Logout(w http.ResponseWriter, r *http.Request)
-	// GetCurrentUser 获取当前登录用户
+	// GetCurrentUser 获取当前登录用户（含角色与模块权限）
 	// (GET /auth/me)
 	GetCurrentUser(w http.ResponseWriter, r *http.Request)
+	// ChangeOwnPassword 修改自己的密码（需验证当前密码，成功后注销其他会话）
+	// (PUT /auth/password)
+	ChangeOwnPassword(w http.ResponseWriter, r *http.Request)
 	// GetHealthz 健康检查
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
+	// ListRoles 角色列表（需 users 权限）
+	// (GET /roles)
+	ListRoles(w http.ResponseWriter, r *http.Request)
+	// CreateRole 创建角色（需 users 权限）
+	// (POST /roles)
+	CreateRole(w http.ResponseWriter, r *http.Request)
+	// DeleteRole 删除角色（需 users 权限；内置角色与仍被使用的角色不可删除）
+	// (DELETE /roles/{id})
+	DeleteRole(w http.ResponseWriter, r *http.Request, id IdPath)
+	// UpdateRole 修改角色名或权限（需 users 权限；内置角色不可修改）
+	// (PATCH /roles/{id})
+	UpdateRole(w http.ResponseWriter, r *http.Request, id IdPath)
+	// GetUpdateStatus 检查在线更新（需 system 权限；查询 GitHub 最新 Release）
+	// (GET /system/update)
+	GetUpdateStatus(w http.ResponseWriter, r *http.Request)
+	// TriggerDeploy 触发在线更新（需 system 权限；调 GitHub Actions 重新部署指定版本）
+	// (POST /system/update/deploy)
+	TriggerDeploy(w http.ResponseWriter, r *http.Request)
+	// ListUsers 用户列表（需 users 权限）
+	// (GET /users)
+	ListUsers(w http.ResponseWriter, r *http.Request)
+	// CreateUser 创建用户（需 users 权限；不开放注册，账号只能在此创建）
+	// (POST /users)
+	CreateUser(w http.ResponseWriter, r *http.Request)
+	// DeleteUser 删除用户（需 users 权限；不能删除自己）
+	// (DELETE /users/{id})
+	DeleteUser(w http.ResponseWriter, r *http.Request, id IdPath)
+	// UpdateUser 修改用户角色或重置密码（需 users 权限；不能改自己的角色）
+	// (PATCH /users/{id})
+	UpdateUser(w http.ResponseWriter, r *http.Request, id IdPath)
 	// GetVersion 当前服务版本
 	// (GET /version)
 	GetVersion(w http.ResponseWriter, r *http.Request)
@@ -152,11 +283,213 @@ func (siw *ServerInterfaceWrapper) GetCurrentUser(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// ChangeOwnPassword operation middleware
+func (siw *ServerInterfaceWrapper) ChangeOwnPassword(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ChangeOwnPassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetHealthz operation middleware
 func (siw *ServerInterfaceWrapper) GetHealthz(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealthz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListRoles operation middleware
+func (siw *ServerInterfaceWrapper) ListRoles(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListRoles(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateRole operation middleware
+func (siw *ServerInterfaceWrapper) CreateRole(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateRole(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteRole operation middleware
+func (siw *ServerInterfaceWrapper) DeleteRole(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteRole(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateRole operation middleware
+func (siw *ServerInterfaceWrapper) UpdateRole(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateRole(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUpdateStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetUpdateStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUpdateStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TriggerDeploy operation middleware
+func (siw *ServerInterfaceWrapper) TriggerDeploy(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TriggerDeploy(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListUsers operation middleware
+func (siw *ServerInterfaceWrapper) ListUsers(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListUsers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateUser operation middleware
+func (siw *ServerInterfaceWrapper) CreateUser(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateUser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteUser operation middleware
+func (siw *ServerInterfaceWrapper) DeleteUser(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteUser(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateUser operation middleware
+func (siw *ServerInterfaceWrapper) UpdateUser(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateUser(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -305,6 +638,17 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/me", wrapper.GetCurrentUser)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/auth/password", wrapper.ChangeOwnPassword)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/users", wrapper.ListUsers)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/users", wrapper.CreateUser)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/users/{id}", wrapper.DeleteUser)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/users/{id}", wrapper.UpdateUser)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/roles", wrapper.ListRoles)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/roles", wrapper.CreateRole)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/roles/{id}", wrapper.DeleteRole)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/roles/{id}", wrapper.UpdateRole)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/update", wrapper.GetUpdateStatus)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/update/deploy", wrapper.TriggerDeploy)
 
 	return m
 }

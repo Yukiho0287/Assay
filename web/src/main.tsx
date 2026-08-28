@@ -5,12 +5,17 @@ import { createBrowserRouter, RouterProvider } from 'react-router'
 import '@fontsource-variable/inter'
 import './index.css'
 import { AppLayout } from '@/layouts/app-layout'
+import { I18nProvider } from '@/lib/i18n'
+import { applyStoredTheme } from '@/lib/theme'
 import ChannelsPage from '@/pages/channels'
 import DashboardPage from '@/pages/dashboard'
 import LoginPage from '@/pages/login'
 import QualityPage from '@/pages/quality'
 import SettingsPage from '@/pages/settings'
 import StabilityPage from '@/pages/stability'
+
+// 渲染前恢复持久化主题，避免暗色用户首屏闪白
+applyStoredTheme()
 
 const router = createBrowserRouter([
   { path: '/login', Component: LoginPage },
@@ -32,7 +37,9 @@ const queryClient = new QueryClient()
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      <I18nProvider>
+        <RouterProvider router={router} />
+      </I18nProvider>
     </QueryClientProvider>
   </StrictMode>,
 )

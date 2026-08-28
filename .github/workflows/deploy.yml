@@ -1,0 +1,50 @@
+# 重部署流水线：把某个已发布版本重新部署到服务器（不重新构建）。
+# 两个入口：平台「在线更新」弹窗（后端调 workflow_dispatch API）与 GitHub 页面手动触发。
+# 直接下载 release.yml 存档在 GitHub Release 的镜像 tar 并校验 sha256，走同一个蓝绿接收端。
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要部署的版本 tag（须已有对应 GitHub Release）"
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 校验 tag 格式
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9][A-Za-z0-9.+~-]*$ ]] || { echo "::error::tag 格式非法：$TAG"; exit 1; }
+
+      - name: 下载 Release 镜像资产
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "assay-$TAG-image.tar.gz" --pattern "assay-$TAG-image.tar.gz.sha256"
+          sha256sum -c "assay-$TAG-image.tar.gz.sha256"
+
+      - name: 部署到服务器（蓝绿切换）
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          sum=$(cut -d' ' -f1 "assay-$TAG-image.tar.gz.sha256")
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o IdentitiesOnly=yes \
+            "root@$DEPLOY_HOST" "deploy $TAG $sum" \
+            < "assay-$TAG-image.tar.gz"

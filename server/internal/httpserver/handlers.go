@@ -11,6 +11,7 @@ import (
 	"github.com/Yukiho0287/assay/server/internal/api"
 	"github.com/Yukiho0287/assay/server/internal/auth"
 	"github.com/Yukiho0287/assay/server/internal/db"
+	"github.com/Yukiho0287/assay/server/internal/update"
 	"github.com/Yukiho0287/assay/server/internal/version"
 )
 
@@ -26,9 +27,68 @@ var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("assay-timing-dummy"), bcr
 type handlers struct {
 	log *slog.Logger
 	q   *db.Queries
+	gh  *update.Client
 }
 
 var _ api.ServerInterface = (*handlers)(nil)
+
+// session 当前请求的会话上下文：用户、角色权限与本会话 token 哈希
+type session struct {
+	db.GetSessionUserRow
+	perms     api.PermissionMap
+	tokenHash []byte
+}
+
+// requireAuth 解析会话；未登录统一 401。受保护端点的第一行都从这里开始。
+func (h *handlers) requireAuth(w http.ResponseWriter, r *http.Request) (session, bool) {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil || c.Value == "" {
+		writeJSON(w, http.StatusUnauthorized, api.Error{Error: "未登录或会话已过期"})
+		return session{}, false
+	}
+	hash := auth.HashToken(c.Value)
+	u, err := h.q.GetSessionUser(r.Context(), hash)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, api.Error{Error: "未登录或会话已过期"})
+		return session{}, false
+	}
+	s := session{GetSessionUserRow: u, tokenHash: hash}
+	if err := json.Unmarshal(u.Permissions, &s.perms); err != nil {
+		h.log.Error("角色权限数据损坏", "role", u.RoleName, "err", err)
+		writeJSON(w, http.StatusInternalServerError, api.Error{Error: "服务内部错误"})
+		return session{}, false
+	}
+	return s, true
+}
+
+// requirePerm 模块级门禁：登录 + 对应模块开关开启才放行
+func (h *handlers) requirePerm(w http.ResponseWriter, r *http.Request, module string) (session, bool) {
+	s, ok := h.requireAuth(w, r)
+	if !ok {
+		return session{}, false
+	}
+	if !hasModule(s.perms, module) {
+		writeJSON(w, http.StatusForbidden, api.Error{Error: "无权访问该模块"})
+		return session{}, false
+	}
+	return s, true
+}
+
+func hasModule(p api.PermissionMap, module string) bool {
+	switch module {
+	case "channels":
+		return p.Channels
+	case "quality":
+		return p.Quality
+	case "stability":
+		return p.Stability
+	case "users":
+		return p.Users
+	case "system":
+		return p.System
+	}
+	return false
+}
 
 func (h *handlers) GetHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, api.Health{Status: api.Ok})
@@ -104,27 +164,64 @@ func (h *handlers) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
-	u, ok := h.sessionUser(r)
+	s, ok := h.requireAuth(w, r)
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, api.Error{Error: "未登录或会话已过期"})
 		return
 	}
 	writeJSON(w, http.StatusOK, api.CurrentUser{
-		Id:       u.ID,
-		Username: u.Username,
-		Role:     api.CurrentUserRole(u.Role),
+		Id:          s.ID,
+		Username:    s.Username,
+		Role:        s.RoleName,
+		Permissions: s.perms,
 	})
 }
 
-// sessionUser 从请求 cookie 解析出当前会话用户；后续受保护端点统一走这里。
-func (h *handlers) sessionUser(r *http.Request) (db.GetSessionUserRow, bool) {
-	c, err := r.Cookie(sessionCookie)
-	if err != nil || c.Value == "" {
-		return db.GetSessionUserRow{}, false
+func (h *handlers) ChangeOwnPassword(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.requireAuth(w, r)
+	if !ok {
+		return
 	}
-	u, err := h.q.GetSessionUser(r.Context(), auth.HashToken(c.Value))
+	var req api.ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CurrentPassword == "" {
+		writeJSON(w, http.StatusBadRequest, api.Error{Error: "请求格式错误"})
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		writeJSON(w, http.StatusBadRequest, api.Error{Error: "新密码至少 8 位"})
+		return
+	}
+
+	hash, err := h.q.GetUserPasswordHash(r.Context(), s.ID)
 	if err != nil {
-		return db.GetSessionUserRow{}, false
+		writeJSON(w, http.StatusInternalServerError, api.Error{Error: "服务内部错误"})
+		return
 	}
-	return u, true
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)) != nil {
+		writeJSON(w, http.StatusBadRequest, api.Error{Error: "当前密码错误"})
+		return
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		h.log.Error("哈希新密码失败", "err", err)
+		writeJSON(w, http.StatusInternalServerError, api.Error{Error: "服务内部错误"})
+		return
+	}
+	if _, err := h.q.UpdateUserPassword(r.Context(), db.UpdateUserPasswordParams{
+		ID:           s.ID,
+		PasswordHash: string(newHash),
+	}); err != nil {
+		h.log.Error("更新密码失败", "err", err)
+		writeJSON(w, http.StatusInternalServerError, api.Error{Error: "服务内部错误"})
+		return
+	}
+	// 改密后注销本人其他会话，只保留当前这一个
+	if err := h.q.DeleteOtherUserSessions(r.Context(), db.DeleteOtherUserSessionsParams{
+		UserID:    s.ID,
+		TokenHash: s.tokenHash,
+	}); err != nil {
+		h.log.Error("注销其他会话失败", "err", err)
+	}
+	h.log.Info("用户修改密码", "username", s.Username)
+	w.WriteHeader(http.StatusNoContent)
 }

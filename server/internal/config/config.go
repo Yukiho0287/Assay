@@ -14,6 +14,10 @@ type Config struct {
 	DatabaseURL string
 	// AdminPassword 初始管理员密码（可选）；为空时首次启动随机生成并打印日志
 	AdminPassword string
+	// GitHubRepo 在线更新所查的 GitHub 仓库（owner/repo）
+	GitHubRepo string
+	// GitHubToken 访问私有仓库 Release 与触发 Actions 的 token（可选；未配置则在线更新降级为不可用）
+	GitHubToken string
 }
 
 // Load 从环境变量加载配置并校验。新增配置项必须在此处校验。
@@ -22,6 +26,8 @@ func Load() (*Config, error) {
 		Addr:          getenv("ASSAY_ADDR", ":8080"),
 		DatabaseURL:   os.Getenv("ASSAY_DATABASE_URL"),
 		AdminPassword: os.Getenv("ASSAY_ADMIN_PASSWORD"),
+		GitHubRepo:    getenv("ASSAY_GITHUB_REPO", "Yukiho0287/Assay"),
+		GitHubToken:   os.Getenv("ASSAY_GITHUB_TOKEN"),
 	}
 	if cfg.Addr == "" {
 		return nil, fmt.Errorf("ASSAY_ADDR 不能为空")

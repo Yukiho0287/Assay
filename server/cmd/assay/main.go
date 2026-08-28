@@ -15,6 +15,7 @@ import (
 	"github.com/Yukiho0287/assay/server/internal/config"
 	"github.com/Yukiho0287/assay/server/internal/db"
 	"github.com/Yukiho0287/assay/server/internal/httpserver"
+	"github.com/Yukiho0287/assay/server/internal/update"
 	"github.com/Yukiho0287/assay/server/internal/version"
 )
 
@@ -97,8 +98,10 @@ func serve() {
 		ln = listeners[0]
 	}
 
+	gh := update.New(cfg.GitHubRepo, cfg.GitHubToken)
+
 	log.Info("assay 启动", "version", version.Version)
-	if err := httpserver.New(cfg.Addr, log, pool).Run(ctx, ln); err != nil {
+	if err := httpserver.New(cfg.Addr, log, pool, gh).Run(ctx, ln); err != nil {
 		log.Error("http server exited", "err", err)
 		os.Exit(1)
 	}
