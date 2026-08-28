@@ -1,0 +1,24 @@
+# Assay 主服务：跑 /opt/assay/current/assay（current 为指向具体版本目录的符号链接，
+# 回滚 = 切链接 + 重启）。依赖 assay-postgres 容器（docker）与 assay.socket。
+[Unit]
+Description=Assay LLM channel testing platform
+Requires=assay.socket
+After=network-online.target docker.service assay.socket
+Wants=network-online.target
+
+[Service]
+User=assay
+Group=assay
+EnvironmentFile=/opt/assay/env
+ExecStart=/opt/assay/current/assay serve
+Restart=on-failure
+RestartSec=2
+
+# 只约束自己，不影响机器上其他服务
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

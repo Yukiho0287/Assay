@@ -11,6 +11,7 @@ import (
 	"github.com/Yukiho0287/assay/server/internal/api"
 	"github.com/Yukiho0287/assay/server/internal/auth"
 	"github.com/Yukiho0287/assay/server/internal/db"
+	"github.com/Yukiho0287/assay/server/internal/version"
 )
 
 const (
@@ -31,6 +32,10 @@ var _ api.ServerInterface = (*handlers)(nil)
 
 func (h *handlers) GetHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, api.Health{Status: api.Ok})
+}
+
+func (h *handlers) GetVersion(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, api.VersionInfo{Version: version.Version})
 }
 
 func (h *handlers) Login(w http.ResponseWriter, r *http.Request) {

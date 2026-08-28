@@ -1,0 +1,84 @@
+# 发布流水线：人在 main 上打 tag vX.Y.Z 触发（唯一发布闸门）。
+# 构建 linux/amd64 单二进制（内嵌前端、ldflags 注入版本号）→ GitHub Release → SSH 推送服务器部署。
+# 服务器侧由 deploy/deploy-receive.sh（authorized_keys 强制命令）接收，自动选择热重启/短停机迁移路径。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 校验 tag 必须打在 main 上
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::tag 不在 main 上——只允许对 CI 通过并合入 main 的提交发版"; exit 1; }
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: 构建前端
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: 构建单二进制（内嵌前端）
+        working-directory: server
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          cp -r ../web/dist internal/web/dist
+          go build -tags embedweb -trimpath \
+            -ldflags "-s -w -X github.com/Yukiho0287/assay/server/internal/version.Version=${GITHUB_REF_NAME}" \
+            -o assay ./cmd/assay
+          tar -czf "../assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz" assay
+
+      - name: 生成校验和
+        run: sha256sum "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz" > "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz.sha256"
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" --generate-notes \
+            "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz" \
+            "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz.sha256"
+
+      - name: 部署到服务器
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          sum=$(cut -d' ' -f1 "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz.sha256")
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o IdentitiesOnly=yes \
+            "root@$DEPLOY_HOST" "deploy $GITHUB_REF_NAME $sum" \
+            < "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz"

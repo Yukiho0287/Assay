@@ -1,0 +1,11 @@
+# Assay 监听 socket：由 systemd 持有，服务重启期间连接在内核队列排队而不被拒绝，
+# 无迁移更新因此接近零停机。
+[Unit]
+Description=Assay listen socket
+
+[Socket]
+ListenStream=0.0.0.0:8321
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target

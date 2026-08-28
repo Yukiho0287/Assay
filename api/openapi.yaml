@@ -18,6 +18,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /version:
+    get:
+      operationId: getVersion
+      summary: 当前服务版本
+      tags: [system]
+      responses:
+        "200":
+          description: 正在运行的服务版本号
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionInfo"
   /auth/login:
     post:
       operationId: login
@@ -79,6 +91,12 @@ components:
         status:
           type: string
           enum: [ok]
+    VersionInfo:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
     LoginRequest:
       type: object
       required: [username, password]

@@ -1,6 +1,7 @@
 import type { components } from '@/api/schema'
 
 export type CurrentUser = components['schemas']['CurrentUser']
+export type VersionInfo = components['schemas']['VersionInfo']
 export type ApiError = components['schemas']['Error']
 
 // 统一请求封装：非 2xx 抛出带后端 error 文案的异常
@@ -30,6 +31,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
+}
+
+export const systemApi = {
+  version: () => request<VersionInfo>('/api/version'),
 }
 
 export const authApi = {

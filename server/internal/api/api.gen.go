@@ -74,6 +74,11 @@ type LoginRequest struct {
 	Username string `json:"username"`
 }
 
+// VersionInfo defines model for VersionInfo.
+type VersionInfo struct {
+	Version string `json:"version"`
+}
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
@@ -91,6 +96,9 @@ type ServerInterface interface {
 	// GetHealthz 健康检查
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
+	// GetVersion 当前服务版本
+	// (GET /version)
+	GetVersion(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -149,6 +157,20 @@ func (siw *ServerInterfaceWrapper) GetHealthz(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealthz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetVersion operation middleware
+func (siw *ServerInterfaceWrapper) GetVersion(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetVersion(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -279,6 +301,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealthz)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/version", wrapper.GetVersion)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/me", wrapper.GetCurrentUser)

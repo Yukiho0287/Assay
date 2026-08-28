@@ -1,0 +1,82 @@
+# dev 分支 CI：后端构建/静态检查 + 契约与生成代码一致性 + 前端构建/lint；
+# 全绿后自动 fast-forward 合并 dev → main（main 始终指向最近一次 CI 通过的状态）。
+# 发布唯一闸门是人在 main 上打 tag vX.Y.Z（见 release.yml）。
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: 契约与 sqlc 生成代码一致性检查
+        working-directory: server
+        run: |
+          go generate ./...
+          go tool sqlc generate
+          git diff --exit-code || { echo "::error::生成代码与契约/schema 不一致，请本地重新生成后提交"; exit 1; }
+      - name: 构建与静态检查
+        working-directory: server
+        run: |
+          go build ./...
+          go vet ./...
+      - name: 内嵌构建可编译（用空 dist 占位）
+        working-directory: server
+        run: |
+          mkdir -p internal/web/dist && touch internal/web/dist/index.html
+          go build -tags embedweb ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: 安装依赖
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: 契约生成类型一致性检查
+        working-directory: web
+        run: |
+          pnpm gen:api
+          git diff --exit-code || { echo "::error::src/api/schema.d.ts 与契约不一致，请本地 pnpm gen:api 后提交"; exit 1; }
+      - name: 构建与 lint
+        working-directory: web
+        run: |
+          pnpm build
+          pnpm lint
+
+  # dev 全绿后自动推进 main；main 只接受 fast-forward，人不直接在 main 上提交
+  promote:
+    needs: [backend, frontend]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: fast-forward 合并 dev → main
+        run: |
+          git fetch origin main || true
+          if git rev-parse --verify origin/main >/dev/null 2>&1; then
+            if ! git merge-base --is-ancestor origin/main HEAD; then
+              echo "::error::main 不是 dev 的祖先，无法 fast-forward——main 上出现了 dev 之外的提交，需人工处理"
+              exit 1
+            fi
+          fi
+          git push origin HEAD:main
