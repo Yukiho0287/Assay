@@ -1,6 +1,6 @@
 # 发布流水线：人在 main 上打 tag vX.Y.Z 触发（唯一发布闸门）。
-# 构建 linux/amd64 单二进制（内嵌前端、ldflags 注入版本号）→ GitHub Release → SSH 推送服务器部署。
-# 服务器侧由 deploy/deploy-receive.sh（authorized_keys 强制命令）接收，自动选择热重启/短停机迁移路径。
+# 构建 linux/amd64 单二进制（内嵌前端、ldflags 注入版本号）→ 打成 docker 镜像 →
+# GitHub Release 存档镜像 tar → SSH 推送服务器（docker load + 蓝绿切换，见 deploy/deploy-receive.sh）。
 name: Release
 
 on:
@@ -25,6 +25,8 @@ jobs:
             || { echo "::error::tag 不在 main 上——只允许对 CI 通过并合入 main 的提交发版"; exit 1; }
 
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -52,10 +54,14 @@ jobs:
           go build -tags embedweb -trimpath \
             -ldflags "-s -w -X github.com/Yukiho0287/assay/server/internal/version.Version=${GITHUB_REF_NAME}" \
             -o assay ./cmd/assay
-          tar -czf "../assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz" assay
 
-      - name: 生成校验和
-        run: sha256sum "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz" > "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz.sha256"
+      - name: 构建镜像并导出
+        run: |
+          mkdir -p stage
+          cp server/assay stage/assay
+          docker build -f deploy/Dockerfile -t "assay:${GITHUB_REF_NAME}" stage
+          docker save "assay:${GITHUB_REF_NAME}" | gzip > "assay-${GITHUB_REF_NAME}-image.tar.gz"
+          sha256sum "assay-${GITHUB_REF_NAME}-image.tar.gz" > "assay-${GITHUB_REF_NAME}-image.tar.gz.sha256"
 
       - name: 创建 GitHub Release
         env:
@@ -63,10 +69,10 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" --generate-notes \
-            "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz" \
-            "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz.sha256"
+            "assay-${GITHUB_REF_NAME}-image.tar.gz" \
+            "assay-${GITHUB_REF_NAME}-image.tar.gz.sha256"
 
-      - name: 部署到服务器
+      - name: 部署到服务器（蓝绿切换）
         env:
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -77,8 +83,8 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          sum=$(cut -d' ' -f1 "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz.sha256")
+          sum=$(cut -d' ' -f1 "assay-${GITHUB_REF_NAME}-image.tar.gz.sha256")
           ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o IdentitiesOnly=yes \
             "root@$DEPLOY_HOST" "deploy $GITHUB_REF_NAME $sum" \
-            < "assay-${GITHUB_REF_NAME}-linux-amd64.tar.gz"
+            < "assay-${GITHUB_REF_NAME}-image.tar.gz"

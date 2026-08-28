@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# Assay 部署接收端：由 GitHub Actions 经 SSH 调用。
-# 该脚本通过 authorized_keys 的 command= 强制命令绑定到部署专用 key——
-# 那把 key 连上来只能执行本脚本，别的什么都干不了。
+# Assay 部署接收端（容器蓝绿版）：由 GitHub Actions 经 SSH 调用。
+# 通过 authorized_keys 的 command= 强制命令绑定到部署专用 key——那把 key 只能执行本脚本。
 #
-# 协议：SSH_ORIGINAL_COMMAND = "deploy <tag> <sha256>"，stdin = assay-<tag>-linux-amd64.tar.gz
-# 路径：无待应用迁移 → 直接重启（socket activation 下连接排队，接近零停机）；
-#       有迁移 → pg_dump 备份 → 停服 → 起新版（启动时自动迁移）→ 健康检查。
-# 失败：健康检查不过 → 符号链接切回旧版重启（二进制回滚；数据库只 roll-forward）。
+# 协议：SSH_ORIGINAL_COMMAND = "deploy <tag> <sha256>"，stdin = docker 镜像 tar.gz（含 assay:<tag>）
+# 无迁移：起新色容器 → 健康检查 → openresty upstream 切流（nginx -t 通过才平滑 reload）→ 停旧色，零停机
+# 有迁移：pg_dump 备份 → 停旧色 → 起新色（启动时自动迁移）→ 切流，短停机
+# 失败：新容器不健康则删除之、保持旧色在线（迁移路径下重启旧色）；数据库只 roll-forward
 set -euo pipefail
 
 ROOT=/opt/assay
 ENV_FILE=$ROOT/env
-VERSION_URL=http://127.0.0.1:8321/api/version
+UPSTREAM_CONF=/opt/1panel/www/conf.d/assay-upstream.conf
+ENTRY_URL=http://127.0.0.1:8321/api/version
+declare -A PORT=([blue]=8322 [green]=8323)
+
+write_upstream() {
+  printf 'upstream assay_backend {\n    server 127.0.0.1:%s;\n}\n' "$1" > "$UPSTREAM_CONF"
+}
 
 read -r action tag sum _rest <<< "${SSH_ORIGINAL_COMMAND:-}" || true
 if [[ "${action:-}" != "deploy" || ! "${tag:-}" =~ ^v[0-9][A-Za-z0-9.+~-]*$ || ! "${sum:-}" =~ ^[0-9a-f]{64}$ ]]; then
@@ -22,58 +27,80 @@ fi
 echo "[deploy] 接收 $tag"
 tmp=$(mktemp -d "$ROOT/tmp.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-cat > "$tmp/assay.tar.gz"
+cat > "$tmp/image.tar.gz"
 
-echo "$sum  $tmp/assay.tar.gz" | sha256sum -c - >/dev/null \
+echo "$sum  $tmp/image.tar.gz" | sha256sum -c - >/dev/null \
   || { echo "拒绝：sha256 校验失败" >&2; exit 1; }
 
-rel=$ROOT/releases/$tag
-mkdir -p "$rel"
-tar -xzf "$tmp/assay.tar.gz" -C "$rel"
-[[ -x "$rel/assay" ]] || { echo "拒绝：包内缺少 assay 可执行文件" >&2; exit 1; }
-chown -R assay:assay "$rel"
-# SELinux enforcing 时 systemd 需要 bin_t 才能执行 /opt 下的二进制
-if command -v getenforce >/dev/null && [[ "$(getenforce)" == "Enforcing" ]]; then
-  chcon -t bin_t "$rel/assay"
-fi
+docker load -qi "$tmp/image.tar.gz" >/dev/null
+docker image inspect "assay:$tag" >/dev/null 2>&1 \
+  || { echo "拒绝：镜像包内没有 assay:$tag" >&2; exit 1; }
 
-prev=$(readlink -f "$ROOT/current" 2>/dev/null || true)
+# 判定当前活动颜色与目标颜色
+active=""
+docker ps --format '{{.Names}}' | grep -qx assay-blue && active=blue
+docker ps --format '{{.Names}}' | grep -qx assay-green && active=green
+target=blue
+[[ "$active" == "blue" ]] && target=green
+echo "[deploy] 活动颜色: ${active:-无} → 目标颜色: $target (127.0.0.1:${PORT[$target]})"
 
-set -a; source "$ENV_FILE"; set +a
-pending=$("$rel/assay" migrate pending)
+pending=$(docker run --rm --network assay-net --env-file "$ENV_FILE" "assay:$tag" migrate pending)
 echo "[deploy] 待应用迁移: $pending"
 
-if [[ "$pending" != "0" ]]; then
+if [[ "$pending" != "0" && -n "$active" ]]; then
   echo "[deploy] 迁移路径：先备份数据库再短停机"
   backup=$ROOT/backups/assay-$(date +%Y%m%d-%H%M%S)-pre-$tag.sql.gz
   docker exec assay-postgres pg_dump -U assay assay | gzip > "$backup"
   echo "[deploy] 备份完成 $backup ($(du -h "$backup" | cut -f1))"
-  systemctl stop assay
+  docker stop "assay-$active" >/dev/null # 新旧 schema 不并跑：先停旧再让新版迁移
 fi
 
-ln -sfn "$rel" "$ROOT/current"
-systemctl restart assay
+docker rm -f "assay-$target" >/dev/null 2>&1 || true
+docker run -d --name "assay-$target" --restart unless-stopped \
+  --network assay-net -p "127.0.0.1:${PORT[$target]}:8321" \
+  --env-file "$ENV_FILE" "assay:$tag" >/dev/null
 
-# 健康检查：15 秒内 /api/version 必须返回新 tag，否则回滚
+# 新色容器健康检查：20 秒内 /api/version 必须返回新 tag
 ok=""
-for _ in $(seq 1 15); do
+for _ in $(seq 1 20); do
   sleep 1
-  if curl -sf --max-time 2 "$VERSION_URL" | grep -q "\"$tag\""; then
+  if curl -sf --max-time 2 "http://127.0.0.1:${PORT[$target]}/api/version" | grep -q "\"$tag\""; then
     ok=1
     break
   fi
 done
-
 if [[ -z "$ok" ]]; then
-  echo "[deploy] 健康检查失败，回滚到 ${prev:-<无上一版本>}" >&2
-  journalctl -u assay -n 30 --no-pager >&2 || true
-  if [[ -n "$prev" && -d "$prev" ]]; then
-    ln -sfn "$prev" "$ROOT/current"
-    systemctl restart assay
-  fi
+  echo "[deploy] 新容器健康检查失败，回退保持旧版" >&2
+  docker logs --tail 30 "assay-$target" >&2 || true
+  docker rm -f "assay-$target" >/dev/null 2>&1 || true
+  [[ "$pending" != "0" && -n "$active" ]] && docker start "assay-$active" >/dev/null
   exit 1
 fi
 
-echo "[deploy] $tag 上线成功（模式：$([[ "$pending" == "0" ]] && echo 热重启 || echo 迁移短停机)）"
-# 只保留最近 5 个版本目录
-ls -1dt "$ROOT"/releases/*/ | tail -n +6 | xargs -r rm -rf
+# 切流：先 nginx -t 校验（保护共享 openresty），通过才平滑 reload
+write_upstream "${PORT[$target]}"
+if ! docker exec OpenResty nginx -t >/dev/null 2>&1; then
+  echo "[deploy] openresty 配置校验失败，恢复原 upstream" >&2
+  [[ -n "$active" ]] && write_upstream "${PORT[$active]}"
+  docker rm -f "assay-$target" >/dev/null 2>&1 || true
+  [[ "$pending" != "0" && -n "$active" ]] && docker start "assay-$active" >/dev/null
+  exit 1
+fi
+docker exec OpenResty nginx -s reload
+
+# 入口验证：8321 必须已切到新版本
+entry_ok=""
+for _ in $(seq 1 5); do
+  sleep 1
+  curl -sf --max-time 2 "$ENTRY_URL" | grep -q "\"$tag\"" && { entry_ok=1; break; }
+done
+[[ -n "$entry_ok" ]] || { echo "[deploy] 入口 :8321 未切到 $tag，请人工检查" >&2; exit 1; }
+
+# 下线旧色
+if [[ -n "$active" && "$active" != "$target" ]]; then
+  docker rm -f "assay-$active" >/dev/null 2>&1 || true
+fi
+
+echo "[deploy] $tag 上线成功（$([[ "$pending" == "0" ]] && echo 蓝绿零停机 || echo 迁移短停机)，活动颜色: $target）"
+# 清理旧镜像：保留最近 3 个 assay:*（docker images 默认按创建时间倒序）
+docker images assay --format '{{.Tag}}' | awk 'NR>3' | xargs -r -I{} docker rmi "assay:{}" >/dev/null 2>&1 || true
