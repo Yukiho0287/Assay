@@ -3,6 +3,10 @@
 # 下载 release.yml 存档在 GitHub Release 的镜像 tar 并校验 sha256，再执行蓝绿切换。
 name: Deploy
 
+concurrency:
+  group: assay-production-deploy
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:

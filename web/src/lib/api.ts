@@ -48,7 +48,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new RequestError(res.status, message)
   }
   if (res.status === 204) return undefined as T
-  return (await res.json()) as T
+  const body = await res.text()
+  if (!body.trim()) return undefined as T
+  return JSON.parse(body) as T
 }
 
 export const systemApi = {
