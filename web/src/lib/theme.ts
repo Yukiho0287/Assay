@@ -2,7 +2,8 @@
 const THEME_KEY = 'assay-theme'
 
 export function applyStoredTheme() {
-  document.documentElement.classList.toggle('dark', localStorage.getItem(THEME_KEY) === 'dark')
+  // 默认深色：仅在用户显式选过浅色时才用浅色
+  document.documentElement.classList.toggle('dark', localStorage.getItem(THEME_KEY) !== 'light')
 }
 
 export function isDark(): boolean {
