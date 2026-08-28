@@ -18,6 +18,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /auth/login:
+    post:
+      operationId: login
+      summary: 登录，成功后通过 HttpOnly Cookie 建立会话
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "204":
+          description: 登录成功，Set-Cookie 下发会话
+        "400":
+          description: 请求格式错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: 用户名或密码错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: 登出，销毁当前会话
+      tags: [auth]
+      responses:
+        "204":
+          description: 已登出（无论此前是否持有有效会话）
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      summary: 获取当前登录用户
+      tags: [auth]
+      responses:
+        "200":
+          description: 当前用户信息
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          description: 未登录或会话已过期
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   schemas:
     Health:
@@ -27,3 +79,31 @@ components:
         status:
           type: string
           enum: [ok]
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          minLength: 1
+    CurrentUser:
+      type: object
+      required: [id, username, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          type: string
+          enum: [admin, member]
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

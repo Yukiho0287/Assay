@@ -10,7 +10,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/Yukiho0287/assay/server/internal/api"
+	"github.com/Yukiho0287/assay/server/internal/db"
 )
 
 type Server struct {
@@ -18,9 +21,10 @@ type Server struct {
 	log  *slog.Logger
 }
 
-func New(addr string, log *slog.Logger) *Server {
+func New(addr string, log *slog.Logger, pool *pgxpool.Pool) *Server {
 	mux := http.NewServeMux()
-	api.HandlerFromMuxWithBaseURL(&handlers{log: log}, mux, "/api")
+	h := &handlers{log: log, q: db.New(pool)}
+	api.HandlerFromMuxWithBaseURL(h, mux, "/api")
 
 	return &Server{
 		http: &http.Server{
@@ -50,17 +54,6 @@ func (s *Server) Run(ctx context.Context) error {
 		defer cancel()
 		return s.http.Shutdown(shutdownCtx)
 	}
-}
-
-// handlers 实现 api.ServerInterface；所有业务端点在此实现。
-type handlers struct {
-	log *slog.Logger
-}
-
-var _ api.ServerInterface = (*handlers)(nil)
-
-func (h *handlers) GetHealthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, api.Health{Status: api.Ok})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

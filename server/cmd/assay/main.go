@@ -7,7 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/Yukiho0287/assay/server/internal/auth"
 	"github.com/Yukiho0287/assay/server/internal/config"
+	"github.com/Yukiho0287/assay/server/internal/db"
 	"github.com/Yukiho0287/assay/server/internal/httpserver"
 )
 
@@ -23,7 +25,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := httpserver.New(cfg.Addr, log).Run(ctx); err != nil {
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Error("数据库初始化失败", "err", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	if err := auth.EnsureAdmin(ctx, db.New(pool), log, cfg.AdminPassword); err != nil {
+		log.Error("初始管理员引导失败", "err", err)
+		os.Exit(1)
+	}
+
+	if err := httpserver.New(cfg.Addr, log, pool).Run(ctx); err != nil {
 		log.Error("http server exited", "err", err)
 		os.Exit(1)
 	}
