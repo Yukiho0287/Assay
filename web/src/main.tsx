@@ -7,6 +7,7 @@ import './index.css'
 import { AppLayout } from '@/layouts/app-layout'
 import { I18nProvider } from '@/lib/i18n'
 import { applyStoredTheme } from '@/lib/theme'
+import ChannelDetailPage from '@/pages/channel-detail'
 import ChannelsPage from '@/pages/channels'
 import DashboardPage from '@/pages/dashboard'
 import LoginPage from '@/pages/login'
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, Component: DashboardPage },
       { path: 'channels', Component: ChannelsPage },
+      { path: 'channels/:id', Component: ChannelDetailPage },
       { path: 'quality', Component: QualityPage },
       { path: 'stability', Component: StabilityPage },
       { path: 'settings', Component: SettingsPage },

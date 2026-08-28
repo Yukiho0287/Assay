@@ -13,3 +13,19 @@ sql:
             go_type: "github.com/google/uuid.UUID"
           - db_type: "timestamptz"
             go_type: "time.Time"
+          # 可空列/参数映射为 Go 指针，省去 pgtype 包装（nil = SQL NULL）
+          - db_type: "text"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          - db_type: "pg_catalog.bool"
+            nullable: true
+            go_type:
+              type: "bool"
+              pointer: true
+          - db_type: "pg_catalog.float8"
+            nullable: true
+            go_type:
+              type: "float64"
+              pointer: true

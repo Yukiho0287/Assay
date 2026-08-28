@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Assay API
   description: LLM 渠道检测平台 API。本文件是前后端契约的唯一真相源（契约优先）。
-  version: 0.2.0
+  version: 0.3.0
 servers:
   - url: /api
 paths:
@@ -286,6 +286,234 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /channels:
+    get:
+      operationId: listChannels
+      summary: 渠道列表（需 channels 权限）
+      tags: [channels]
+      responses:
+        "200":
+          description: 全部渠道（含停用的，不含模型明细）
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Channel"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createChannel
+      summary: 创建渠道（需 channels 权限；模型条目建完后在详情页添加）
+      tags: [channels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelCreate"
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: 渠道名已存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /channels/{id}:
+    get:
+      operationId: getChannel
+      summary: 渠道详情（需 channels 权限；含模型条目列表）
+      tags: [channels]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: 渠道详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateChannel
+      summary: 修改渠道基本信息（需 channels 权限；apiKey 缺省=不改、给值=覆盖，写后不可回读）
+      tags: [channels]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelUpdate"
+      responses:
+        "200":
+          description: 修改后的渠道
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: 渠道名已存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteChannel
+      summary: 删除渠道（需 channels 权限；硬删，历史任务持有参数快照不受影响，key 不可恢复）
+      tags: [channels]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "204":
+          description: 删除成功（连同其模型条目）
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /channels/{id}/models:
+    post:
+      operationId: addChannelModel
+      summary: 添加模型条目（需 channels 权限）
+      tags: [channels]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelEntryUpsert"
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: 该渠道下模型名已存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /channels/{id}/models/{modelId}:
+    put:
+      operationId: updateChannelModel
+      summary: 全量替换模型条目（需 channels 权限；缺省的价格字段即清空为未定价）
+      tags: [channels]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/ModelIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelEntryUpsert"
+      responses:
+        "200":
+          description: 替换后的模型条目
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: 该渠道下模型名已存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteChannelModel
+      summary: 删除模型条目（需 channels 权限；历史任务持有参数快照不受影响）
+      tags: [channels]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/ModelIdPath"
+      responses:
+        "204":
+          description: 删除成功
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /channels/{id}/test:
+    post:
+      operationId: testChannel
+      summary: 连通测试（需 channels 权限；对每个已声明协议发 max_tokens=1 最小真实请求，结果落库为该渠道最近一次测试）
+      tags: [channels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectivityTestRequest"
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: 各协议连通结果（上游拒绝/超时也是正常结果，体现在 ok=false）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectivityTest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /system/update:
     get:
       operationId: getUpdateStatus
@@ -338,6 +566,13 @@ components:
   parameters:
     IdPath:
       name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ModelIdPath:
+      name: modelId
       in: path
       required: true
       schema:
@@ -528,6 +763,187 @@ components:
           description: 要部署的版本 tag（须是已存在的 GitHub Release）
           type: string
           pattern: "^v[0-9][A-Za-z0-9.+~-]*$"
+    Protocol:
+      description: 渠道支持的接口协议
+      type: string
+      enum: [openai_chat, openai_responses, anthropic_messages]
+    Currency:
+      description: 渠道定价币种（仅标注，不做汇率换算）
+      type: string
+      enum: [USD, CNY]
+    Channel:
+      type: object
+      required:
+        [id, name, baseUrl, keyPrefix, protocols, currency, note, disabled, modelCount, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        baseUrl:
+          description: 填到版本段（如 https://api.example.com/v1），平台按协议拼固定末段
+          type: string
+        keyPrefix:
+          description: API key 脱敏前缀（key 写后不可回读）
+          type: string
+        protocols:
+          type: array
+          items:
+            $ref: "#/components/schemas/Protocol"
+        currency:
+          $ref: "#/components/schemas/Currency"
+        note:
+          type: string
+        disabled:
+          description: 停用后不可选入新检测任务，配置与 key 保留
+          type: boolean
+        modelCount:
+          type: integer
+        lastTest:
+          $ref: "#/components/schemas/ConnectivityTest"
+        createdAt:
+          type: string
+          format: date-time
+    ChannelDetail:
+      allOf:
+        - $ref: "#/components/schemas/Channel"
+        - type: object
+          required: [models]
+          properties:
+            models:
+              type: array
+              items:
+                $ref: "#/components/schemas/ModelEntry"
+    ChannelCreate:
+      type: object
+      required: [name, baseUrl, apiKey, protocols]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        baseUrl:
+          description: 填到版本段（如 https://api.example.com/v1），末尾斜杠会被自动去除
+          type: string
+          minLength: 1
+          maxLength: 512
+        apiKey:
+          type: string
+          minLength: 1
+        protocols:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Protocol"
+        currency:
+          $ref: "#/components/schemas/Currency"
+        note:
+          type: string
+          maxLength: 500
+    ChannelUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        baseUrl:
+          type: string
+          minLength: 1
+          maxLength: 512
+        apiKey:
+          description: 缺省=不改；给值=整体覆盖
+          type: string
+          minLength: 1
+        protocols:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Protocol"
+        currency:
+          $ref: "#/components/schemas/Currency"
+        note:
+          type: string
+          maxLength: 500
+        disabled:
+          type: boolean
+    ModelEntry:
+      type: object
+      required: [id, name, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        inputPrice:
+          description: 每 1M token 输入单价（币种见渠道）；三个价格字段全缺省=未定价
+          type: number
+        outputPrice:
+          type: number
+        cachedInputPrice:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+    ModelEntryUpsert:
+      description: 输入/输出价须成对出现；缓存读价只能在前两者存在时给出（服务端校验）
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        inputPrice:
+          type: number
+          minimum: 0
+        outputPrice:
+          type: number
+          minimum: 0
+        cachedInputPrice:
+          type: number
+          minimum: 0
+    ConnectivityTestRequest:
+      type: object
+      required: [modelId]
+      properties:
+        modelId:
+          description: 用哪个模型条目发探测请求
+          type: string
+          format: uuid
+    ConnectivityTest:
+      type: object
+      required: [testedAt, model, results]
+      properties:
+        testedAt:
+          type: string
+          format: date-time
+        model:
+          description: 当时用于探测的模型名（快照，不随模型条目改名变化）
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectivityResult"
+    ConnectivityResult:
+      type: object
+      required: [protocol, ok]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/Protocol"
+        ok:
+          type: boolean
+        status:
+          description: 上游 HTTP 状态码（网络层失败时缺省）
+          type: integer
+        ttftMs:
+          description: 首字延迟毫秒（流式首个数据帧到达；失败时缺省）
+          type: integer
+        error:
+          description: 失败摘要（超时/连接错误/上游错误体截断）
+          type: string
     Error:
       type: object
       required: [error]

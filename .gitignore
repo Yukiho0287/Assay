@@ -16,3 +16,4 @@ server/internal/web/dist/
 # 工具产物
 .playwright-mcp/
 .DS_Store
+CONTEXT.md

@@ -26,6 +26,11 @@ const pathModule: Record<string, keyof PermissionMap> = {
   '/stability': 'stability',
 }
 
+// 标题与门禁都按首段路径匹配，子路由（如 /channels/:id）继承所属模块
+function topPath(pathname: string): string {
+  return '/' + (pathname.split('/')[1] ?? '')
+}
+
 // lucide 已移除品牌图标，GitHub mark 用官方 SVG path 内联
 function GithubIcon() {
   return (
@@ -71,7 +76,7 @@ export function AppLayout() {
     navigate('/login', { replace: true })
   }
 
-  const requiredModule = pathModule[pathname]
+  const requiredModule = pathModule[topPath(pathname)]
   const allowed = !requiredModule || user.permissions[requiredModule]
 
   return (
@@ -85,7 +90,7 @@ export function AppLayout() {
         <SidebarInset>
           <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
             <span className="text-sm font-medium">
-              {pageTitleKeys[pathname] ? t(pageTitleKeys[pathname]) : 'Assay'}
+              {pageTitleKeys[topPath(pathname)] ? t(pageTitleKeys[topPath(pathname)]) : 'Assay'}
             </span>
             <div className="ml-auto flex items-center gap-1">
               <Button variant="ghost" size="icon" className="size-8" asChild>

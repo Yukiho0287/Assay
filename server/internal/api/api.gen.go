@@ -14,6 +14,24 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for Currency.
+const (
+	CNY Currency = "CNY"
+	USD Currency = "USD"
+)
+
+// Valid indicates whether the value is a known member of the Currency enum.
+func (e Currency) Valid() bool {
+	switch e {
+	case CNY:
+		return true
+	case USD:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	Ok HealthStatus = "ok"
@@ -29,11 +47,138 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
+// Defines values for Protocol.
+const (
+	AnthropicMessages Protocol = "anthropic_messages"
+	OpenaiChat        Protocol = "openai_chat"
+	OpenaiResponses   Protocol = "openai_responses"
+)
+
+// Valid indicates whether the value is a known member of the Protocol enum.
+func (e Protocol) Valid() bool {
+	switch e {
+	case AnthropicMessages:
+		return true
+	case OpenaiChat:
+		return true
+	case OpenaiResponses:
+		return true
+	default:
+		return false
+	}
+}
+
 // ChangePasswordRequest defines model for ChangePasswordRequest.
 type ChangePasswordRequest struct {
 	CurrentPassword string `json:"currentPassword"`
 	NewPassword     string `json:"newPassword"`
 }
+
+// Channel defines model for Channel.
+type Channel struct {
+	// BaseUrl 填到版本段（如 https://api.example.com/v1），平台按协议拼固定末段
+	BaseUrl   string    `json:"baseUrl"`
+	CreatedAt time.Time `json:"createdAt"`
+
+	// Currency 渠道定价币种（仅标注，不做汇率换算）
+	Currency Currency `json:"currency"`
+
+	// Disabled 停用后不可选入新检测任务，配置与 key 保留
+	Disabled bool               `json:"disabled"`
+	Id       openapi_types.UUID `json:"id"`
+
+	// KeyPrefix API key 脱敏前缀（key 写后不可回读）
+	KeyPrefix  string            `json:"keyPrefix"`
+	LastTest   *ConnectivityTest `json:"lastTest,omitempty"`
+	ModelCount int               `json:"modelCount"`
+	Name       string            `json:"name"`
+	Note       string            `json:"note"`
+	Protocols  []Protocol        `json:"protocols"`
+}
+
+// ChannelCreate defines model for ChannelCreate.
+type ChannelCreate struct {
+	ApiKey string `json:"apiKey"`
+
+	// BaseUrl 填到版本段（如 https://api.example.com/v1），末尾斜杠会被自动去除
+	BaseUrl string `json:"baseUrl"`
+
+	// Currency 渠道定价币种（仅标注，不做汇率换算）
+	Currency  *Currency  `json:"currency,omitempty"`
+	Name      string     `json:"name"`
+	Note      *string    `json:"note,omitempty"`
+	Protocols []Protocol `json:"protocols"`
+}
+
+// ChannelDetail defines model for ChannelDetail.
+type ChannelDetail struct {
+	// BaseUrl 填到版本段（如 https://api.example.com/v1），平台按协议拼固定末段
+	BaseUrl   string    `json:"baseUrl"`
+	CreatedAt time.Time `json:"createdAt"`
+
+	// Currency 渠道定价币种（仅标注，不做汇率换算）
+	Currency Currency `json:"currency"`
+
+	// Disabled 停用后不可选入新检测任务，配置与 key 保留
+	Disabled bool               `json:"disabled"`
+	Id       openapi_types.UUID `json:"id"`
+
+	// KeyPrefix API key 脱敏前缀（key 写后不可回读）
+	KeyPrefix  string            `json:"keyPrefix"`
+	LastTest   *ConnectivityTest `json:"lastTest,omitempty"`
+	ModelCount int               `json:"modelCount"`
+	Models     []ModelEntry      `json:"models"`
+	Name       string            `json:"name"`
+	Note       string            `json:"note"`
+	Protocols  []Protocol        `json:"protocols"`
+}
+
+// ChannelUpdate defines model for ChannelUpdate.
+type ChannelUpdate struct {
+	// ApiKey 缺省=不改；给值=整体覆盖
+	ApiKey  *string `json:"apiKey,omitempty"`
+	BaseUrl *string `json:"baseUrl,omitempty"`
+
+	// Currency 渠道定价币种（仅标注，不做汇率换算）
+	Currency  *Currency   `json:"currency,omitempty"`
+	Disabled  *bool       `json:"disabled,omitempty"`
+	Name      *string     `json:"name,omitempty"`
+	Note      *string     `json:"note,omitempty"`
+	Protocols *[]Protocol `json:"protocols,omitempty"`
+}
+
+// ConnectivityResult defines model for ConnectivityResult.
+type ConnectivityResult struct {
+	// Error 失败摘要（超时/连接错误/上游错误体截断）
+	Error *string `json:"error,omitempty"`
+	Ok    bool    `json:"ok"`
+
+	// Protocol 渠道支持的接口协议
+	Protocol Protocol `json:"protocol"`
+
+	// Status 上游 HTTP 状态码（网络层失败时缺省）
+	Status *int `json:"status,omitempty"`
+
+	// TtftMs 首字延迟毫秒（流式首个数据帧到达；失败时缺省）
+	TtftMs *int `json:"ttftMs,omitempty"`
+}
+
+// ConnectivityTest defines model for ConnectivityTest.
+type ConnectivityTest struct {
+	// Model 当时用于探测的模型名（快照，不随模型条目改名变化）
+	Model    string               `json:"model"`
+	Results  []ConnectivityResult `json:"results"`
+	TestedAt time.Time            `json:"testedAt"`
+}
+
+// ConnectivityTestRequest defines model for ConnectivityTestRequest.
+type ConnectivityTestRequest struct {
+	// ModelId 用哪个模型条目发探测请求
+	ModelId openapi_types.UUID `json:"modelId"`
+}
+
+// Currency 渠道定价币种（仅标注，不做汇率换算）
+type Currency string
 
 // CurrentUser defines model for CurrentUser.
 type CurrentUser struct {
@@ -70,6 +215,26 @@ type LoginRequest struct {
 	Username string `json:"username"`
 }
 
+// ModelEntry defines model for ModelEntry.
+type ModelEntry struct {
+	CachedInputPrice *float32           `json:"cachedInputPrice,omitempty"`
+	CreatedAt        time.Time          `json:"createdAt"`
+	Id               openapi_types.UUID `json:"id"`
+
+	// InputPrice 每 1M token 输入单价（币种见渠道）；三个价格字段全缺省=未定价
+	InputPrice  *float32 `json:"inputPrice,omitempty"`
+	Name        string   `json:"name"`
+	OutputPrice *float32 `json:"outputPrice,omitempty"`
+}
+
+// ModelEntryUpsert 输入/输出价须成对出现；缓存读价只能在前两者存在时给出（服务端校验）
+type ModelEntryUpsert struct {
+	CachedInputPrice *float32 `json:"cachedInputPrice,omitempty"`
+	InputPrice       *float32 `json:"inputPrice,omitempty"`
+	Name             string   `json:"name"`
+	OutputPrice      *float32 `json:"outputPrice,omitempty"`
+}
+
 // PermissionMap 粗粒度模块权限开关：控制对应页面与该模块全部接口的访问
 type PermissionMap struct {
 	Channels  bool `json:"channels"`
@@ -78,6 +243,9 @@ type PermissionMap struct {
 	System    bool `json:"system"`
 	Users     bool `json:"users"`
 }
+
+// Protocol 渠道支持的接口协议
+type Protocol string
 
 // Role defines model for Role.
 type Role struct {
@@ -147,6 +315,9 @@ type VersionInfo struct {
 // IdPath defines model for IdPath.
 type IdPath = openapi_types.UUID
 
+// ModelIdPath defines model for ModelIdPath.
+type ModelIdPath = openapi_types.UUID
+
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
 
@@ -164,6 +335,21 @@ type LoginJSONRequestBody = LoginRequest
 
 // ChangeOwnPasswordJSONRequestBody defines body for ChangeOwnPassword for application/json ContentType.
 type ChangeOwnPasswordJSONRequestBody = ChangePasswordRequest
+
+// CreateChannelJSONRequestBody defines body for CreateChannel for application/json ContentType.
+type CreateChannelJSONRequestBody = ChannelCreate
+
+// UpdateChannelJSONRequestBody defines body for UpdateChannel for application/json ContentType.
+type UpdateChannelJSONRequestBody = ChannelUpdate
+
+// AddChannelModelJSONRequestBody defines body for AddChannelModel for application/json ContentType.
+type AddChannelModelJSONRequestBody = ModelEntryUpsert
+
+// UpdateChannelModelJSONRequestBody defines body for UpdateChannelModel for application/json ContentType.
+type UpdateChannelModelJSONRequestBody = ModelEntryUpsert
+
+// TestChannelJSONRequestBody defines body for TestChannel for application/json ContentType.
+type TestChannelJSONRequestBody = ConnectivityTestRequest
 
 // CreateRoleJSONRequestBody defines body for CreateRole for application/json ContentType.
 type CreateRoleJSONRequestBody = RoleCreate
@@ -194,6 +380,33 @@ type ServerInterface interface {
 	// ChangeOwnPassword 修改自己的密码（需验证当前密码，成功后注销其他会话）
 	// (PUT /auth/password)
 	ChangeOwnPassword(w http.ResponseWriter, r *http.Request)
+	// ListChannels 渠道列表（需 channels 权限）
+	// (GET /channels)
+	ListChannels(w http.ResponseWriter, r *http.Request)
+	// CreateChannel 创建渠道（需 channels 权限；模型条目建完后在详情页添加）
+	// (POST /channels)
+	CreateChannel(w http.ResponseWriter, r *http.Request)
+	// DeleteChannel 删除渠道（需 channels 权限；硬删，历史任务持有参数快照不受影响，key 不可恢复）
+	// (DELETE /channels/{id})
+	DeleteChannel(w http.ResponseWriter, r *http.Request, id IdPath)
+	// GetChannel 渠道详情（需 channels 权限；含模型条目列表）
+	// (GET /channels/{id})
+	GetChannel(w http.ResponseWriter, r *http.Request, id IdPath)
+	// UpdateChannel 修改渠道基本信息（需 channels 权限；apiKey 缺省=不改、给值=覆盖，写后不可回读）
+	// (PATCH /channels/{id})
+	UpdateChannel(w http.ResponseWriter, r *http.Request, id IdPath)
+	// AddChannelModel 添加模型条目（需 channels 权限）
+	// (POST /channels/{id}/models)
+	AddChannelModel(w http.ResponseWriter, r *http.Request, id IdPath)
+	// DeleteChannelModel 删除模型条目（需 channels 权限；历史任务持有参数快照不受影响）
+	// (DELETE /channels/{id}/models/{modelId})
+	DeleteChannelModel(w http.ResponseWriter, r *http.Request, id IdPath, modelId ModelIdPath)
+	// UpdateChannelModel 全量替换模型条目（需 channels 权限；缺省的价格字段即清空为未定价）
+	// (PUT /channels/{id}/models/{modelId})
+	UpdateChannelModel(w http.ResponseWriter, r *http.Request, id IdPath, modelId ModelIdPath)
+	// TestChannel 连通测试（需 channels 权限；对每个已声明协议发 max_tokens=1 最小真实请求，结果落库为该渠道最近一次测试）
+	// (POST /channels/{id}/test)
+	TestChannel(w http.ResponseWriter, r *http.Request, id IdPath)
 	// GetHealthz 健康检查
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
@@ -288,6 +501,234 @@ func (siw *ServerInterfaceWrapper) ChangeOwnPassword(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ChangeOwnPassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListChannels operation middleware
+func (siw *ServerInterfaceWrapper) ListChannels(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListChannels(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateChannel operation middleware
+func (siw *ServerInterfaceWrapper) CreateChannel(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateChannel(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteChannel operation middleware
+func (siw *ServerInterfaceWrapper) DeleteChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteChannel(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetChannel operation middleware
+func (siw *ServerInterfaceWrapper) GetChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetChannel(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateChannel operation middleware
+func (siw *ServerInterfaceWrapper) UpdateChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateChannel(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddChannelModel operation middleware
+func (siw *ServerInterfaceWrapper) AddChannelModel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddChannelModel(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteChannelModel operation middleware
+func (siw *ServerInterfaceWrapper) DeleteChannelModel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "modelId" -------------
+	var modelId ModelIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "modelId", r.PathValue("modelId"), &modelId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "modelId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteChannelModel(w, r, id, modelId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateChannelModel operation middleware
+func (siw *ServerInterfaceWrapper) UpdateChannelModel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "modelId" -------------
+	var modelId ModelIdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "modelId", r.PathValue("modelId"), &modelId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "modelId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateChannelModel(w, r, id, modelId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestChannel operation middleware
+func (siw *ServerInterfaceWrapper) TestChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestChannel(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -647,6 +1088,15 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/roles", wrapper.CreateRole)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/roles/{id}", wrapper.DeleteRole)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/roles/{id}", wrapper.UpdateRole)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/channels", wrapper.ListChannels)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/channels", wrapper.CreateChannel)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/channels/{id}", wrapper.DeleteChannel)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/channels/{id}", wrapper.GetChannel)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/channels/{id}", wrapper.UpdateChannel)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/channels/{id}/models", wrapper.AddChannelModel)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/channels/{id}/models/{modelId}", wrapper.DeleteChannelModel)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/channels/{id}/models/{modelId}", wrapper.UpdateChannelModel)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/channels/{id}/test", wrapper.TestChannel)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/update", wrapper.GetUpdateStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/update/deploy", wrapper.TriggerDeploy)
 

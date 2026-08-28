@@ -34,6 +34,80 @@ func (q *Queries) CountUsersByRole(ctx context.Context, roleID uuid.UUID) (int64
 	return count, err
 }
 
+const createChannel = `-- name: CreateChannel :one
+insert into channels (name, base_url, api_key, key_prefix, protocols, currency, note)
+values ($1, $2, $3, $4, $5, $6, $7)
+returning id
+`
+
+type CreateChannelParams struct {
+	Name      string
+	BaseUrl   string
+	ApiKey    string
+	KeyPrefix string
+	Protocols []string
+	Currency  string
+	Note      string
+}
+
+func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, createChannel,
+		arg.Name,
+		arg.BaseUrl,
+		arg.ApiKey,
+		arg.KeyPrefix,
+		arg.Protocols,
+		arg.Currency,
+		arg.Note,
+	)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createChannelModel = `-- name: CreateChannelModel :one
+insert into channel_models (channel_id, name, input_price, output_price, cached_input_price)
+values ($1, $2, $3, $4, $5)
+returning id, name, input_price, output_price, cached_input_price, created_at
+`
+
+type CreateChannelModelParams struct {
+	ChannelID        uuid.UUID
+	Name             string
+	InputPrice       *float64
+	OutputPrice      *float64
+	CachedInputPrice *float64
+}
+
+type CreateChannelModelRow struct {
+	ID               uuid.UUID
+	Name             string
+	InputPrice       *float64
+	OutputPrice      *float64
+	CachedInputPrice *float64
+	CreatedAt        time.Time
+}
+
+func (q *Queries) CreateChannelModel(ctx context.Context, arg CreateChannelModelParams) (CreateChannelModelRow, error) {
+	row := q.db.QueryRow(ctx, createChannelModel,
+		arg.ChannelID,
+		arg.Name,
+		arg.InputPrice,
+		arg.OutputPrice,
+		arg.CachedInputPrice,
+	)
+	var i CreateChannelModelRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.InputPrice,
+		&i.OutputPrice,
+		&i.CachedInputPrice,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createRole = `-- name: CreateRole :one
 insert into roles (name, permissions)
 values ($1, $2)
@@ -97,6 +171,35 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (uuid.UU
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const deleteChannel = `-- name: DeleteChannel :execrows
+delete from channels where id = $1
+`
+
+func (q *Queries) DeleteChannel(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteChannel, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteChannelModel = `-- name: DeleteChannelModel :execrows
+delete from channel_models where id = $1 and channel_id = $2
+`
+
+type DeleteChannelModelParams struct {
+	ID        uuid.UUID
+	ChannelID uuid.UUID
+}
+
+func (q *Queries) DeleteChannelModel(ctx context.Context, arg DeleteChannelModelParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteChannelModel, arg.ID, arg.ChannelID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :execrows
@@ -165,6 +268,105 @@ delete from sessions where user_id = $1
 func (q *Queries) DeleteUserSessions(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deleteUserSessions, userID)
 	return err
+}
+
+const getChannel = `-- name: GetChannel :one
+select c.id, c.name, c.base_url, c.key_prefix, c.protocols, c.currency, c.note,
+       c.disabled, c.last_test, c.created_at,
+       (select count(*) from channel_models m where m.channel_id = c.id) as model_count
+from channels c
+where c.id = $1
+`
+
+type GetChannelRow struct {
+	ID         uuid.UUID
+	Name       string
+	BaseUrl    string
+	KeyPrefix  string
+	Protocols  []string
+	Currency   string
+	Note       string
+	Disabled   bool
+	LastTest   []byte
+	CreatedAt  time.Time
+	ModelCount int64
+}
+
+func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (GetChannelRow, error) {
+	row := q.db.QueryRow(ctx, getChannel, id)
+	var i GetChannelRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.BaseUrl,
+		&i.KeyPrefix,
+		&i.Protocols,
+		&i.Currency,
+		&i.Note,
+		&i.Disabled,
+		&i.LastTest,
+		&i.CreatedAt,
+		&i.ModelCount,
+	)
+	return i, err
+}
+
+const getChannelModel = `-- name: GetChannelModel :one
+select id, name, input_price, output_price, cached_input_price, created_at
+from channel_models
+where id = $1 and channel_id = $2
+`
+
+type GetChannelModelParams struct {
+	ID        uuid.UUID
+	ChannelID uuid.UUID
+}
+
+type GetChannelModelRow struct {
+	ID               uuid.UUID
+	Name             string
+	InputPrice       *float64
+	OutputPrice      *float64
+	CachedInputPrice *float64
+	CreatedAt        time.Time
+}
+
+func (q *Queries) GetChannelModel(ctx context.Context, arg GetChannelModelParams) (GetChannelModelRow, error) {
+	row := q.db.QueryRow(ctx, getChannelModel, arg.ID, arg.ChannelID)
+	var i GetChannelModelRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.InputPrice,
+		&i.OutputPrice,
+		&i.CachedInputPrice,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getChannelSecret = `-- name: GetChannelSecret :one
+select id, base_url, api_key, protocols from channels where id = $1
+`
+
+type GetChannelSecretRow struct {
+	ID        uuid.UUID
+	BaseUrl   string
+	ApiKey    string
+	Protocols []string
+}
+
+// 连通测试专用：整个代码库唯一读取 api_key 明文的查询，结果绝不进任何响应体
+func (q *Queries) GetChannelSecret(ctx context.Context, id uuid.UUID) (GetChannelSecretRow, error) {
+	row := q.db.QueryRow(ctx, getChannelSecret, id)
+	var i GetChannelSecretRow
+	err := row.Scan(
+		&i.ID,
+		&i.BaseUrl,
+		&i.ApiKey,
+		&i.Protocols,
+	)
+	return i, err
 }
 
 const getRole = `-- name: GetRole :one
@@ -298,6 +500,103 @@ func (q *Queries) GetUserPasswordHash(ctx context.Context, id uuid.UUID) (string
 	return password_hash, err
 }
 
+const listChannelModels = `-- name: ListChannelModels :many
+select id, name, input_price, output_price, cached_input_price, created_at
+from channel_models
+where channel_id = $1
+order by created_at
+`
+
+type ListChannelModelsRow struct {
+	ID               uuid.UUID
+	Name             string
+	InputPrice       *float64
+	OutputPrice      *float64
+	CachedInputPrice *float64
+	CreatedAt        time.Time
+}
+
+func (q *Queries) ListChannelModels(ctx context.Context, channelID uuid.UUID) ([]ListChannelModelsRow, error) {
+	rows, err := q.db.Query(ctx, listChannelModels, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChannelModelsRow
+	for rows.Next() {
+		var i ListChannelModelsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.InputPrice,
+			&i.OutputPrice,
+			&i.CachedInputPrice,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChannels = `-- name: ListChannels :many
+select c.id, c.name, c.base_url, c.key_prefix, c.protocols, c.currency, c.note,
+       c.disabled, c.last_test, c.created_at,
+       (select count(*) from channel_models m where m.channel_id = c.id) as model_count
+from channels c
+order by c.created_at
+`
+
+type ListChannelsRow struct {
+	ID         uuid.UUID
+	Name       string
+	BaseUrl    string
+	KeyPrefix  string
+	Protocols  []string
+	Currency   string
+	Note       string
+	Disabled   bool
+	LastTest   []byte
+	CreatedAt  time.Time
+	ModelCount int64
+}
+
+func (q *Queries) ListChannels(ctx context.Context) ([]ListChannelsRow, error) {
+	rows, err := q.db.Query(ctx, listChannels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChannelsRow
+	for rows.Next() {
+		var i ListChannelsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.BaseUrl,
+			&i.KeyPrefix,
+			&i.Protocols,
+			&i.Currency,
+			&i.Note,
+			&i.Disabled,
+			&i.LastTest,
+			&i.CreatedAt,
+			&i.ModelCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRoles = `-- name: ListRoles :many
 select id, name, built_in, permissions from roles order by created_at
 `
@@ -373,6 +672,112 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateChannel = `-- name: UpdateChannel :execrows
+update channels set
+    name       = coalesce($1, name),
+    base_url   = coalesce($2, base_url),
+    api_key    = coalesce($3, api_key),
+    key_prefix = coalesce($4, key_prefix),
+    protocols  = coalesce($5, protocols),
+    currency   = coalesce($6, currency),
+    note       = coalesce($7, note),
+    disabled   = coalesce($8, disabled)
+where id = $9
+`
+
+type UpdateChannelParams struct {
+	Name      *string
+	BaseUrl   *string
+	ApiKey    *string
+	KeyPrefix *string
+	Protocols []string
+	Currency  *string
+	Note      *string
+	Disabled  *bool
+	ID        uuid.UUID
+}
+
+func (q *Queries) UpdateChannel(ctx context.Context, arg UpdateChannelParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateChannel,
+		arg.Name,
+		arg.BaseUrl,
+		arg.ApiKey,
+		arg.KeyPrefix,
+		arg.Protocols,
+		arg.Currency,
+		arg.Note,
+		arg.Disabled,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateChannelLastTest = `-- name: UpdateChannelLastTest :execrows
+update channels set last_test = $2 where id = $1
+`
+
+type UpdateChannelLastTestParams struct {
+	ID       uuid.UUID
+	LastTest []byte
+}
+
+func (q *Queries) UpdateChannelLastTest(ctx context.Context, arg UpdateChannelLastTestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateChannelLastTest, arg.ID, arg.LastTest)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateChannelModel = `-- name: UpdateChannelModel :one
+update channel_models
+set name = $3, input_price = $4, output_price = $5, cached_input_price = $6
+where id = $1 and channel_id = $2
+returning id, name, input_price, output_price, cached_input_price, created_at
+`
+
+type UpdateChannelModelParams struct {
+	ID               uuid.UUID
+	ChannelID        uuid.UUID
+	Name             string
+	InputPrice       *float64
+	OutputPrice      *float64
+	CachedInputPrice *float64
+}
+
+type UpdateChannelModelRow struct {
+	ID               uuid.UUID
+	Name             string
+	InputPrice       *float64
+	OutputPrice      *float64
+	CachedInputPrice *float64
+	CreatedAt        time.Time
+}
+
+func (q *Queries) UpdateChannelModel(ctx context.Context, arg UpdateChannelModelParams) (UpdateChannelModelRow, error) {
+	row := q.db.QueryRow(ctx, updateChannelModel,
+		arg.ID,
+		arg.ChannelID,
+		arg.Name,
+		arg.InputPrice,
+		arg.OutputPrice,
+		arg.CachedInputPrice,
+	)
+	var i UpdateChannelModelRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.InputPrice,
+		&i.OutputPrice,
+		&i.CachedInputPrice,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const updateRole = `-- name: UpdateRole :one

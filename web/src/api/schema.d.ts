@@ -178,6 +178,95 @@ export interface paths {
         patch: operations["updateRole"];
         trace?: never;
     };
+    "/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 渠道列表（需 channels 权限） */
+        get: operations["listChannels"];
+        put?: never;
+        /** 创建渠道（需 channels 权限；模型条目建完后在详情页添加） */
+        post: operations["createChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 渠道详情（需 channels 权限；含模型条目列表） */
+        get: operations["getChannel"];
+        put?: never;
+        post?: never;
+        /** 删除渠道（需 channels 权限；硬删，历史任务持有参数快照不受影响，key 不可恢复） */
+        delete: operations["deleteChannel"];
+        options?: never;
+        head?: never;
+        /** 修改渠道基本信息（需 channels 权限；apiKey 缺省=不改、给值=覆盖，写后不可回读） */
+        patch: operations["updateChannel"];
+        trace?: never;
+    };
+    "/channels/{id}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 添加模型条目（需 channels 权限） */
+        post: operations["addChannelModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/{id}/models/{modelId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 全量替换模型条目（需 channels 权限；缺省的价格字段即清空为未定价） */
+        put: operations["updateChannelModel"];
+        post?: never;
+        /** 删除模型条目（需 channels 权限；历史任务持有参数快照不受影响） */
+        delete: operations["deleteChannelModel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 连通测试（需 channels 权限；对每个已声明协议发 max_tokens=1 最小真实请求，结果落库为该渠道最近一次测试） */
+        post: operations["testChannel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/update": {
         parameters: {
             query?: never;
@@ -296,6 +385,98 @@ export interface components {
             /** @description 要部署的版本 tag（须是已存在的 GitHub Release） */
             tag: string;
         };
+        /**
+         * @description 渠道支持的接口协议
+         * @enum {string}
+         */
+        Protocol: "openai_chat" | "openai_responses" | "anthropic_messages";
+        /**
+         * @description 渠道定价币种（仅标注，不做汇率换算）
+         * @enum {string}
+         */
+        Currency: "USD" | "CNY";
+        Channel: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description 填到版本段（如 https://api.example.com/v1），平台按协议拼固定末段 */
+            baseUrl: string;
+            /** @description API key 脱敏前缀（key 写后不可回读） */
+            keyPrefix: string;
+            protocols: components["schemas"]["Protocol"][];
+            currency: components["schemas"]["Currency"];
+            note: string;
+            /** @description 停用后不可选入新检测任务，配置与 key 保留 */
+            disabled: boolean;
+            modelCount: number;
+            lastTest?: components["schemas"]["ConnectivityTest"];
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ChannelDetail: components["schemas"]["Channel"] & {
+            models: components["schemas"]["ModelEntry"][];
+        };
+        ChannelCreate: {
+            name: string;
+            /** @description 填到版本段（如 https://api.example.com/v1），末尾斜杠会被自动去除 */
+            baseUrl: string;
+            apiKey: string;
+            protocols: components["schemas"]["Protocol"][];
+            currency?: components["schemas"]["Currency"];
+            note?: string;
+        };
+        ChannelUpdate: {
+            name?: string;
+            baseUrl?: string;
+            /** @description 缺省=不改；给值=整体覆盖 */
+            apiKey?: string;
+            protocols?: components["schemas"]["Protocol"][];
+            currency?: components["schemas"]["Currency"];
+            note?: string;
+            disabled?: boolean;
+        };
+        ModelEntry: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** @description 每 1M token 输入单价（币种见渠道）；三个价格字段全缺省=未定价 */
+            inputPrice?: number;
+            outputPrice?: number;
+            cachedInputPrice?: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description 输入/输出价须成对出现；缓存读价只能在前两者存在时给出（服务端校验） */
+        ModelEntryUpsert: {
+            name: string;
+            inputPrice?: number;
+            outputPrice?: number;
+            cachedInputPrice?: number;
+        };
+        ConnectivityTestRequest: {
+            /**
+             * Format: uuid
+             * @description 用哪个模型条目发探测请求
+             */
+            modelId: string;
+        };
+        ConnectivityTest: {
+            /** Format: date-time */
+            testedAt: string;
+            /** @description 当时用于探测的模型名（快照，不随模型条目改名变化） */
+            model: string;
+            results: components["schemas"]["ConnectivityResult"][];
+        };
+        ConnectivityResult: {
+            protocol: components["schemas"]["Protocol"];
+            ok: boolean;
+            /** @description 上游 HTTP 状态码（网络层失败时缺省） */
+            status?: number;
+            /** @description 首字延迟毫秒（流式首个数据帧到达；失败时缺省） */
+            ttftMs?: number;
+            /** @description 失败摘要（超时/连接错误/上游错误体截断） */
+            error?: string;
+        };
         Error: {
             error: string;
         };
@@ -340,6 +521,7 @@ export interface components {
     };
     parameters: {
         IdPath: string;
+        ModelIdPath: string;
     };
     requestBodies: never;
     headers: never;
@@ -715,6 +897,284 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Role"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listChannels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 全部渠道（含停用的，不含模型明细） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Channel"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelCreate"];
+            };
+        };
+        responses: {
+            /** @description 创建成功 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Channel"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description 渠道名已存在 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 渠道详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功（连同其模型条目） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelUpdate"];
+            };
+        };
+        responses: {
+            /** @description 修改后的渠道 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Channel"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 渠道名已存在 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    addChannelModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelEntryUpsert"];
+            };
+        };
+        responses: {
+            /** @description 创建成功 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelEntry"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 该渠道下模型名已存在 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateChannelModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+                modelId: components["parameters"]["ModelIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelEntryUpsert"];
+            };
+        };
+        responses: {
+            /** @description 替换后的模型条目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelEntry"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 该渠道下模型名已存在 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteChannelModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+                modelId: components["parameters"]["ModelIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    testChannel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectivityTestRequest"];
+            };
+        };
+        responses: {
+            /** @description 各协议连通结果（上游拒绝/超时也是正常结果，体现在 ok=false） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectivityTest"];
                 };
             };
             400: components["responses"]["BadRequest"];

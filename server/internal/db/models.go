@@ -10,6 +10,30 @@ import (
 	"github.com/google/uuid"
 )
 
+type Channel struct {
+	ID        uuid.UUID
+	Name      string
+	BaseUrl   string
+	ApiKey    string
+	KeyPrefix string
+	Protocols []string
+	Currency  string
+	Note      string
+	Disabled  bool
+	LastTest  []byte
+	CreatedAt time.Time
+}
+
+type ChannelModel struct {
+	ID               uuid.UUID
+	ChannelID        uuid.UUID
+	Name             string
+	InputPrice       *float64
+	OutputPrice      *float64
+	CachedInputPrice *float64
+	CreatedAt        time.Time
+}
+
 type Role struct {
 	ID          uuid.UUID
 	Name        string
