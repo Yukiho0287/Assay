@@ -10,7 +10,73 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const aggregateTaskCaseResults = `-- name: AggregateTaskCaseResults :many
+select mode as bucket_mode, selection_reason as bucket_reason, status, count(*) as n
+from task_case_results
+where task_id = $1
+group by mode, selection_reason, status
+`
+
+type AggregateTaskCaseResultsRow struct {
+	BucketMode   string
+	BucketReason string
+	Status       string
+	N            int64
+}
+
+// 三个维度一次取回：dimension=mode/reason 各一组分桶，前端聚合总数
+func (q *Queries) AggregateTaskCaseResults(ctx context.Context, taskID uuid.UUID) ([]AggregateTaskCaseResultsRow, error) {
+	rows, err := q.db.Query(ctx, aggregateTaskCaseResults, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AggregateTaskCaseResultsRow
+	for rows.Next() {
+		var i AggregateTaskCaseResultsRow
+		if err := rows.Scan(
+			&i.BucketMode,
+			&i.BucketReason,
+			&i.Status,
+			&i.N,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const cancelQueuedTask = `-- name: CancelQueuedTask :execrows
+update tasks set status = 'canceled', finished_at = now()
+where id = $1 and status = 'queued'
+`
+
+// 仅排队中可取消（running 的 MVP 不支持中断）
+func (q *Queries) CancelQueuedTask(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelQueuedTask, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const countTasks = `-- name: CountTasks :one
+select count(*) from tasks where kind = $1
+`
+
+func (q *Queries) CountTasks(ctx context.Context, kind string) (int64, error) {
+	row := q.db.QueryRow(ctx, countTasks, kind)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const countUsers = `-- name: CountUsers :one
 select count(*) from users
@@ -154,6 +220,42 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const createTask = `-- name: CreateTask :one
+insert into tasks (kind, channel_id, target, probes, params, progress_total, created_by)
+values ($1, $2, $3, $4, $5, $6, $7)
+returning id, created_at
+`
+
+type CreateTaskParams struct {
+	Kind          string
+	ChannelID     pgtype.UUID
+	Target        []byte
+	Probes        []string
+	Params        []byte
+	ProgressTotal int32
+	CreatedBy     pgtype.UUID
+}
+
+type CreateTaskRow struct {
+	ID        uuid.UUID
+	CreatedAt time.Time
+}
+
+func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (CreateTaskRow, error) {
+	row := q.db.QueryRow(ctx, createTask,
+		arg.Kind,
+		arg.ChannelID,
+		arg.Target,
+		arg.Probes,
+		arg.Params,
+		arg.ProgressTotal,
+		arg.CreatedBy,
+	)
+	var i CreateTaskRow
+	err := row.Scan(&i.ID, &i.CreatedAt)
+	return i, err
+}
+
 const createUser = `-- name: CreateUser :one
 insert into users (username, password_hash, role_id)
 values ($1, $2, $3)
@@ -249,6 +351,15 @@ func (q *Queries) DeleteSession(ctx context.Context, tokenHash []byte) error {
 	return err
 }
 
+const deleteTaskCaseResults = `-- name: DeleteTaskCaseResults :exec
+delete from task_case_results where task_id = $1
+`
+
+func (q *Queries) DeleteTaskCaseResults(ctx context.Context, taskID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteTaskCaseResults, taskID)
+	return err
+}
+
 const deleteUser = `-- name: DeleteUser :execrows
 delete from users where id = $1
 `
@@ -268,6 +379,45 @@ delete from sessions where user_id = $1
 func (q *Queries) DeleteUserSessions(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deleteUserSessions, userID)
 	return err
+}
+
+const failOrphanTasks = `-- name: FailOrphanTasks :execrows
+update tasks set status = 'failed', error = $1, finished_at = now()
+where status = 'running' and id = any ($2::uuid[])
+`
+
+type FailOrphanTasksParams struct {
+	Error *string
+	Ids   []uuid.UUID
+}
+
+// 启动孤儿清扫：river_job 已不存在/已终结但任务还挂在 running 的，标记失败
+func (q *Queries) FailOrphanTasks(ctx context.Context, arg FailOrphanTasksParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failOrphanTasks, arg.Error, arg.Ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const finishTask = `-- name: FinishTask :execrows
+update tasks set status = $2, error = $3, finished_at = now()
+where id = $1 and status = 'running'
+`
+
+type FinishTaskParams struct {
+	ID     uuid.UUID
+	Status string
+	Error  *string
+}
+
+// 终态不可逆：running 之外（已 canceled/failed）不允许再改
+func (q *Queries) FinishTask(ctx context.Context, arg FinishTaskParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finishTask, arg.ID, arg.Status, arg.Error)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getChannel = `-- name: GetChannel :one
@@ -438,6 +588,54 @@ func (q *Queries) GetSessionUser(ctx context.Context, tokenHash []byte) (GetSess
 		&i.Username,
 		&i.RoleName,
 		&i.Permissions,
+	)
+	return i, err
+}
+
+const getTask = `-- name: GetTask :one
+select t.id, t.kind, t.status, t.channel_id, t.target, t.probes, t.params,
+       t.progress_total, t.progress_done, t.error, t.created_at, t.started_at, t.finished_at,
+       u.username as created_by_name
+from tasks t
+left join users u on u.id = t.created_by
+where t.id = $1
+`
+
+type GetTaskRow struct {
+	ID            uuid.UUID
+	Kind          string
+	Status        string
+	ChannelID     pgtype.UUID
+	Target        []byte
+	Probes        []string
+	Params        []byte
+	ProgressTotal int32
+	ProgressDone  int32
+	Error         *string
+	CreatedAt     time.Time
+	StartedAt     pgtype.Timestamptz
+	FinishedAt    pgtype.Timestamptz
+	CreatedByName *string
+}
+
+func (q *Queries) GetTask(ctx context.Context, id uuid.UUID) (GetTaskRow, error) {
+	row := q.db.QueryRow(ctx, getTask, id)
+	var i GetTaskRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Status,
+		&i.ChannelID,
+		&i.Target,
+		&i.Probes,
+		&i.Params,
+		&i.ProgressTotal,
+		&i.ProgressDone,
+		&i.Error,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedByName,
 	)
 	return i, err
 }
@@ -633,6 +831,164 @@ func (q *Queries) ListRoles(ctx context.Context) ([]ListRolesRow, error) {
 	return items, nil
 }
 
+const listRunningTasks = `-- name: ListRunningTasks :many
+select id, river_job_id from tasks where status = 'running'
+`
+
+type ListRunningTasksRow struct {
+	ID         uuid.UUID
+	RiverJobID pgtype.Int8
+}
+
+func (q *Queries) ListRunningTasks(ctx context.Context) ([]ListRunningTasksRow, error) {
+	rows, err := q.db.Query(ctx, listRunningTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunningTasksRow
+	for rows.Next() {
+		var i ListRunningTasksRow
+		if err := rows.Scan(&i.ID, &i.RiverJobID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskCaseResults = `-- name: ListTaskCaseResults :many
+select probe, suite, line, mode, selection_reason, status, message,
+       http_status, latency_ms, arguments, attempts
+from task_case_results
+where task_id = $1
+  and ($2::text is null or status = $2::text)
+order by probe, suite, line, mode
+`
+
+type ListTaskCaseResultsParams struct {
+	TaskID uuid.UUID
+	Status *string
+}
+
+type ListTaskCaseResultsRow struct {
+	Probe           string
+	Suite           string
+	Line            int32
+	Mode            string
+	SelectionReason string
+	Status          string
+	Message         string
+	HttpStatus      pgtype.Int4
+	LatencyMs       pgtype.Int4
+	Arguments       *string
+	Attempts        int32
+}
+
+func (q *Queries) ListTaskCaseResults(ctx context.Context, arg ListTaskCaseResultsParams) ([]ListTaskCaseResultsRow, error) {
+	rows, err := q.db.Query(ctx, listTaskCaseResults, arg.TaskID, arg.Status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTaskCaseResultsRow
+	for rows.Next() {
+		var i ListTaskCaseResultsRow
+		if err := rows.Scan(
+			&i.Probe,
+			&i.Suite,
+			&i.Line,
+			&i.Mode,
+			&i.SelectionReason,
+			&i.Status,
+			&i.Message,
+			&i.HttpStatus,
+			&i.LatencyMs,
+			&i.Arguments,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTasks = `-- name: ListTasks :many
+select t.id, t.kind, t.status, t.channel_id, t.target, t.probes, t.params,
+       t.progress_total, t.progress_done, t.error, t.created_at, t.started_at, t.finished_at,
+       u.username as created_by_name
+from tasks t
+left join users u on u.id = t.created_by
+where t.kind = $1
+order by t.created_at desc
+limit $2 offset $3
+`
+
+type ListTasksParams struct {
+	Kind   string
+	Limit  int32
+	Offset int32
+}
+
+type ListTasksRow struct {
+	ID            uuid.UUID
+	Kind          string
+	Status        string
+	ChannelID     pgtype.UUID
+	Target        []byte
+	Probes        []string
+	Params        []byte
+	ProgressTotal int32
+	ProgressDone  int32
+	Error         *string
+	CreatedAt     time.Time
+	StartedAt     pgtype.Timestamptz
+	FinishedAt    pgtype.Timestamptz
+	CreatedByName *string
+}
+
+func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]ListTasksRow, error) {
+	rows, err := q.db.Query(ctx, listTasks, arg.Kind, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTasksRow
+	for rows.Next() {
+		var i ListTasksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Status,
+			&i.ChannelID,
+			&i.Target,
+			&i.Probes,
+			&i.Params,
+			&i.ProgressTotal,
+			&i.ProgressDone,
+			&i.Error,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CreatedByName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUsers = `-- name: ListUsers :many
 select u.id, u.username, u.role_id, r.name as role_name, u.created_at
 from users u
@@ -672,6 +1028,34 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const markTaskRunning = `-- name: MarkTaskRunning :execrows
+update tasks set status = 'running', started_at = coalesce(started_at, now())
+where id = $1 and status in ('queued', 'running')
+`
+
+// 状态守卫：只允许 queued→running（River 重试进来时若已是终态则不重置）
+func (q *Queries) MarkTaskRunning(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, markTaskRunning, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setTaskRiverJobID = `-- name: SetTaskRiverJobID :exec
+update tasks set river_job_id = $2 where id = $1
+`
+
+type SetTaskRiverJobIDParams struct {
+	ID         uuid.UUID
+	RiverJobID pgtype.Int8
+}
+
+func (q *Queries) SetTaskRiverJobID(ctx context.Context, arg SetTaskRiverJobIDParams) error {
+	_, err := q.db.Exec(ctx, setTaskRiverJobID, arg.ID, arg.RiverJobID)
+	return err
 }
 
 const updateChannel = `-- name: UpdateChannel :execrows
@@ -811,6 +1195,21 @@ func (q *Queries) UpdateRole(ctx context.Context, arg UpdateRoleParams) (UpdateR
 	return i, err
 }
 
+const updateTaskProgress = `-- name: UpdateTaskProgress :exec
+update tasks set progress_total = $2, progress_done = $3 where id = $1
+`
+
+type UpdateTaskProgressParams struct {
+	ID            uuid.UUID
+	ProgressTotal int32
+	ProgressDone  int32
+}
+
+func (q *Queries) UpdateTaskProgress(ctx context.Context, arg UpdateTaskProgressParams) error {
+	_, err := q.db.Exec(ctx, updateTaskProgress, arg.ID, arg.ProgressTotal, arg.ProgressDone)
+	return err
+}
+
 const updateUserPassword = `-- name: UpdateUserPassword :execrows
 update users set password_hash = $2 where id = $1
 `
@@ -843,4 +1242,52 @@ func (q *Queries) UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const upsertTaskCaseResult = `-- name: UpsertTaskCaseResult :exec
+insert into task_case_results
+    (task_id, probe, suite, line, mode, selection_reason, status, message,
+     http_status, latency_ms, arguments, attempts)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+on conflict (task_id, probe, suite, line, mode) do update set
+    selection_reason = excluded.selection_reason,
+    status           = excluded.status,
+    message          = excluded.message,
+    http_status      = excluded.http_status,
+    latency_ms       = excluded.latency_ms,
+    arguments        = excluded.arguments,
+    attempts         = excluded.attempts
+`
+
+type UpsertTaskCaseResultParams struct {
+	TaskID          uuid.UUID
+	Probe           string
+	Suite           string
+	Line            int32
+	Mode            string
+	SelectionReason string
+	Status          string
+	Message         string
+	HttpStatus      pgtype.Int4
+	LatencyMs       pgtype.Int4
+	Arguments       *string
+	Attempts        int32
+}
+
+func (q *Queries) UpsertTaskCaseResult(ctx context.Context, arg UpsertTaskCaseResultParams) error {
+	_, err := q.db.Exec(ctx, upsertTaskCaseResult,
+		arg.TaskID,
+		arg.Probe,
+		arg.Suite,
+		arg.Line,
+		arg.Mode,
+		arg.SelectionReason,
+		arg.Status,
+		arg.Message,
+		arg.HttpStatus,
+		arg.LatencyMs,
+		arg.Arguments,
+		arg.Attempts,
+	)
+	return err
 }

@@ -148,3 +148,90 @@ returning id, name, input_price, output_price, cached_input_price, created_at;
 
 -- name: DeleteChannelModel :execrows
 delete from channel_models where id = $1 and channel_id = $2;
+
+-- name: CreateTask :one
+insert into tasks (kind, channel_id, target, probes, params, progress_total, created_by)
+values ($1, $2, $3, $4, $5, $6, $7)
+returning id, created_at;
+
+-- name: SetTaskRiverJobID :exec
+update tasks set river_job_id = $2 where id = $1;
+
+-- name: GetTask :one
+select t.id, t.kind, t.status, t.channel_id, t.target, t.probes, t.params,
+       t.progress_total, t.progress_done, t.error, t.created_at, t.started_at, t.finished_at,
+       u.username as created_by_name
+from tasks t
+left join users u on u.id = t.created_by
+where t.id = $1;
+
+-- name: ListTasks :many
+select t.id, t.kind, t.status, t.channel_id, t.target, t.probes, t.params,
+       t.progress_total, t.progress_done, t.error, t.created_at, t.started_at, t.finished_at,
+       u.username as created_by_name
+from tasks t
+left join users u on u.id = t.created_by
+where t.kind = $1
+order by t.created_at desc
+limit $2 offset $3;
+
+-- name: CountTasks :one
+select count(*) from tasks where kind = $1;
+
+-- name: MarkTaskRunning :execrows
+-- 状态守卫：只允许 queued→running（River 重试进来时若已是终态则不重置）
+update tasks set status = 'running', started_at = coalesce(started_at, now())
+where id = $1 and status in ('queued', 'running');
+
+-- name: FinishTask :execrows
+-- 终态不可逆：running 之外（已 canceled/failed）不允许再改
+update tasks set status = $2, error = $3, finished_at = now()
+where id = $1 and status = 'running';
+
+-- name: UpdateTaskProgress :exec
+update tasks set progress_total = $2, progress_done = $3 where id = $1;
+
+-- name: CancelQueuedTask :execrows
+-- 仅排队中可取消（running 的 MVP 不支持中断）
+update tasks set status = 'canceled', finished_at = now()
+where id = $1 and status = 'queued';
+
+-- name: FailOrphanTasks :execrows
+-- 启动孤儿清扫：river_job 已不存在/已终结但任务还挂在 running 的，标记失败
+update tasks set status = 'failed', error = sqlc.arg('error'), finished_at = now()
+where status = 'running' and id = any (sqlc.arg('ids')::uuid[]);
+
+-- name: ListRunningTasks :many
+select id, river_job_id from tasks where status = 'running';
+
+-- name: DeleteTaskCaseResults :exec
+delete from task_case_results where task_id = $1;
+
+-- name: UpsertTaskCaseResult :exec
+insert into task_case_results
+    (task_id, probe, suite, line, mode, selection_reason, status, message,
+     http_status, latency_ms, arguments, attempts)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+on conflict (task_id, probe, suite, line, mode) do update set
+    selection_reason = excluded.selection_reason,
+    status           = excluded.status,
+    message          = excluded.message,
+    http_status      = excluded.http_status,
+    latency_ms       = excluded.latency_ms,
+    arguments        = excluded.arguments,
+    attempts         = excluded.attempts;
+
+-- name: ListTaskCaseResults :many
+select probe, suite, line, mode, selection_reason, status, message,
+       http_status, latency_ms, arguments, attempts
+from task_case_results
+where task_id = $1
+  and (sqlc.narg('status')::text is null or status = sqlc.narg('status')::text)
+order by probe, suite, line, mode;
+
+-- name: AggregateTaskCaseResults :many
+-- 三个维度一次取回：dimension=mode/reason 各一组分桶，前端聚合总数
+select mode as bucket_mode, selection_reason as bucket_reason, status, count(*) as n
+from task_case_results
+where task_id = $1
+group by mode, selection_reason, status;

@@ -15,18 +15,21 @@ import (
 
 	"github.com/Yukiho0287/assay/server/internal/api"
 	"github.com/Yukiho0287/assay/server/internal/db"
+	"github.com/Yukiho0287/assay/server/internal/tasks"
 	"github.com/Yukiho0287/assay/server/internal/update"
 	"github.com/Yukiho0287/assay/server/internal/web"
 )
 
 type Server struct {
-	http *http.Server
-	log  *slog.Logger
+	http   *http.Server
+	log    *slog.Logger
+	broker *taskEventBroker
 }
 
-func New(addr string, log *slog.Logger, pool *pgxpool.Pool, gh *update.Client) *Server {
+func New(addr string, log *slog.Logger, pool *pgxpool.Pool, gh *update.Client, tq *tasks.Client) *Server {
 	mux := http.NewServeMux()
-	h := &handlers{log: log, q: db.New(pool), gh: gh}
+	broker := newTaskEventBroker(pool, log)
+	h := &handlers{log: log, q: db.New(pool), pool: pool, gh: gh, tq: tq, broker: broker}
 	api.HandlerFromMuxWithBaseURL(h, mux, "/api")
 	if wh := web.Handler(); wh != nil {
 		// 发布构建内嵌前端：非 /api 路径全部交给 SPA
@@ -39,7 +42,8 @@ func New(addr string, log *slog.Logger, pool *pgxpool.Pool, gh *update.Client) *
 			Handler:           mux,
 			ReadHeaderTimeout: 10 * time.Second,
 		},
-		log: log,
+		log:    log,
+		broker: broker,
 	}
 }
 
@@ -47,6 +51,8 @@ func New(addr string, log *slog.Logger, pool *pgxpool.Pool, gh *update.Client) *
 // ln 非 nil 时复用外部传入的 socket（systemd socket activation，
 // 热更新时连接在内核队列排队、不吃拒绝），否则按 addr 自行监听。
 func (s *Server) Run(ctx context.Context, ln net.Listener) error {
+	go s.broker.run(ctx) // 任务事件 LISTEN 循环与 http 同生命周期
+
 	errCh := make(chan error, 1)
 	go func() {
 		var err error

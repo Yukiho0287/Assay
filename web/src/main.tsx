@@ -12,6 +12,7 @@ import ChannelsPage from '@/pages/channels'
 import DashboardPage from '@/pages/dashboard'
 import LoginPage from '@/pages/login'
 import QualityPage from '@/pages/quality'
+import QualityTaskDetailPage from '@/pages/quality-task-detail'
 import SettingsPage from '@/pages/settings'
 import StabilityPage from '@/pages/stability'
 
@@ -28,6 +29,7 @@ const router = createBrowserRouter([
       { path: 'channels', Component: ChannelsPage },
       { path: 'channels/:id', Component: ChannelDetailPage },
       { path: 'quality', Component: QualityPage },
+      { path: 'quality/:taskId', Component: QualityTaskDetailPage },
       { path: 'stability', Component: StabilityPage },
       { path: 'settings', Component: SettingsPage },
     ],

@@ -21,6 +21,17 @@ export type ConnectivityTest = components['schemas']['ConnectivityTest']
 export type ConnectivityResult = components['schemas']['ConnectivityResult']
 export type Protocol = components['schemas']['Protocol']
 export type Currency = components['schemas']['Currency']
+export type ProbeInfo = components['schemas']['ProbeInfo']
+export type QualityTask = components['schemas']['QualityTask']
+export type QualityTaskCreate = components['schemas']['QualityTaskCreate']
+export type QualityTaskList = components['schemas']['QualityTaskList']
+export type QualityCaseResult = components['schemas']['QualityCaseResult']
+export type TaskStatus = components['schemas']['TaskStatus']
+export type CaseStatus = components['schemas']['CaseStatus']
+export type CaseMode = components['schemas']['CaseMode']
+export type CostTier = components['schemas']['CostTier']
+export type TaskStatBucket = components['schemas']['TaskStatBucket']
+export type TaskProgressEvent = components['schemas']['TaskProgressEvent']
 
 // 统一请求封装：非 2xx 抛出带后端 error 文案的异常
 export class RequestError extends Error {
@@ -109,6 +120,24 @@ export const channelsApi = {
       method: 'POST',
       body: JSON.stringify({ modelId }),
     }),
+}
+
+export const probesApi = {
+  list: () => request<ProbeInfo[]>('/api/probes'),
+}
+
+export const qualityApi = {
+  createTask: (body: QualityTaskCreate) =>
+    request<QualityTask>('/api/quality/tasks', { method: 'POST', body: JSON.stringify(body) }),
+  listTasks: (limit = 50, offset = 0) =>
+    request<QualityTaskList>(`/api/quality/tasks?limit=${limit}&offset=${offset}`),
+  getTask: (id: string) => request<QualityTask>(`/api/quality/tasks/${id}`),
+  cancelTask: (id: string) =>
+    request<QualityTask>(`/api/quality/tasks/${id}/cancel`, { method: 'POST' }),
+  listResults: (id: string, status?: CaseStatus) =>
+    request<QualityCaseResult[]>(
+      `/api/quality/tasks/${id}/results${status ? `?status=${status}` : ''}`,
+    ),
 }
 
 export const rolesApi = {

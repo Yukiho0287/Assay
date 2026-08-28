@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Yukiho0287/assay/server/internal/api"
 	"github.com/Yukiho0287/assay/server/internal/auth"
 	"github.com/Yukiho0287/assay/server/internal/db"
+	"github.com/Yukiho0287/assay/server/internal/tasks"
 	"github.com/Yukiho0287/assay/server/internal/update"
 	"github.com/Yukiho0287/assay/server/internal/version"
 )
@@ -25,9 +27,12 @@ var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("assay-timing-dummy"), bcr
 
 // handlers 实现 api.ServerInterface；所有业务端点在此实现。
 type handlers struct {
-	log *slog.Logger
-	q   *db.Queries
-	gh  *update.Client
+	log    *slog.Logger
+	q      *db.Queries
+	pool   *pgxpool.Pool // 仅用于需要跨语句事务的端点（如创建任务时任务行+入队同事务）
+	gh     *update.Client
+	tq     *tasks.Client
+	broker *taskEventBroker
 }
 
 var _ api.ServerInterface = (*handlers)(nil)

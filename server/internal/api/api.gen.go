@@ -6,6 +6,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -13,6 +14,66 @@ import (
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for CaseMode.
+const (
+	NonStream CaseMode = "non_stream"
+	Stream    CaseMode = "stream"
+)
+
+// Valid indicates whether the value is a known member of the CaseMode enum.
+func (e CaseMode) Valid() bool {
+	switch e {
+	case NonStream:
+		return true
+	case Stream:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CaseStatus.
+const (
+	Passed   CaseStatus = "passed"
+	Rejected CaseStatus = "rejected"
+	Violated CaseStatus = "violated"
+)
+
+// Valid indicates whether the value is a known member of the CaseStatus enum.
+func (e CaseStatus) Valid() bool {
+	switch e {
+	case Passed:
+		return true
+	case Rejected:
+		return true
+	case Violated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CostTier.
+const (
+	Cheap     CostTier = "cheap"
+	Expensive CostTier = "expensive"
+	Medium    CostTier = "medium"
+)
+
+// Valid indicates whether the value is a known member of the CostTier enum.
+func (e CostTier) Valid() bool {
+	switch e {
+	case Cheap:
+		return true
+	case Expensive:
+		return true
+	case Medium:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for Currency.
 const (
@@ -67,6 +128,39 @@ func (e Protocol) Valid() bool {
 		return false
 	}
 }
+
+// Defines values for TaskStatus.
+const (
+	Canceled  TaskStatus = "canceled"
+	Failed    TaskStatus = "failed"
+	Queued    TaskStatus = "queued"
+	Running   TaskStatus = "running"
+	Succeeded TaskStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the TaskStatus enum.
+func (e TaskStatus) Valid() bool {
+	switch e {
+	case Canceled:
+		return true
+	case Failed:
+		return true
+	case Queued:
+		return true
+	case Running:
+		return true
+	case Succeeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// CaseMode defines model for CaseMode.
+type CaseMode string
+
+// CaseStatus 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规
+type CaseStatus string
 
 // ChangePasswordRequest defines model for ChangePasswordRequest.
 type ChangePasswordRequest struct {
@@ -177,6 +271,9 @@ type ConnectivityTestRequest struct {
 	ModelId openapi_types.UUID `json:"modelId"`
 }
 
+// CostTier 烧钱等级（便宜的挡在贵的前面）
+type CostTier string
+
 // Currency 渠道定价币种（仅标注，不做汇率换算）
 type Currency string
 
@@ -244,8 +341,108 @@ type PermissionMap struct {
 	Users     bool `json:"users"`
 }
 
+// ProbeInfo defines model for ProbeInfo.
+type ProbeInfo struct {
+	// CaseCount 全量用例数（每用例跑非流式+流式两种模式）
+	CaseCount int `json:"caseCount"`
+
+	// CostTier 烧钱等级（便宜的挡在贵的前面）
+	CostTier    CostTier `json:"costTier"`
+	Description string   `json:"description"`
+
+	// Id 检测项唯一标识（如 tool_call_json_schema）
+	Id string `json:"id"`
+
+	// Name 中文显示名
+	Name string `json:"name"`
+
+	// NeedsControl 是否需要对照渠道
+	NeedsControl bool `json:"needsControl"`
+
+	// NeedsPricing 是否要求目标模型已定价
+	NeedsPricing bool `json:"needsPricing"`
+
+	// Protocols 适用协议（渠道须至少声明其中之一）
+	Protocols []Protocol `json:"protocols"`
+}
+
 // Protocol 渠道支持的接口协议
 type Protocol string
+
+// QualityCaseResult defines model for QualityCaseResult.
+type QualityCaseResult struct {
+	// Arguments 模型最终产出的工具参数原文（截断存储）
+	Arguments  *string `json:"arguments,omitempty"`
+	Attempts   int     `json:"attempts"`
+	HttpStatus *int    `json:"httpStatus,omitempty"`
+	LatencyMs  *int    `json:"latencyMs,omitempty"`
+
+	// Line 套件内行号（1 起，与 KVV 官方报告对齐）
+	Line int `json:"line"`
+
+	// Message 失败摘要（校验错误/上游错误体截断；通过时为空）
+	Message         string   `json:"message"`
+	Mode            CaseMode `json:"mode"`
+	Probe           string   `json:"probe"`
+	SelectionReason string   `json:"selectionReason"`
+
+	// Status 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规
+	Status CaseStatus `json:"status"`
+
+	// Suite 语料套件名（如 TestEnforcerCases）
+	Suite string `json:"suite"`
+}
+
+// QualityTask defines model for QualityTask.
+type QualityTask struct {
+	CreatedAt time.Time `json:"createdAt"`
+
+	// CreatedBy 创建者用户名（用户被删后缺省）
+	CreatedBy *string `json:"createdBy,omitempty"`
+
+	// Error 任务级失败原因（用例级失败不算任务失败）
+	Error         *string            `json:"error,omitempty"`
+	FinishedAt    *time.Time         `json:"finishedAt,omitempty"`
+	Id            openapi_types.UUID `json:"id"`
+	Params        QualityTaskParams  `json:"params"`
+	Probes        []string           `json:"probes"`
+	ProgressDone  int                `json:"progressDone"`
+	ProgressTotal int                `json:"progressTotal"`
+	StartedAt     *time.Time         `json:"startedAt,omitempty"`
+	Stats         *TaskStats         `json:"stats,omitempty"`
+	Status        TaskStatus         `json:"status"`
+
+	// Target 检测对象参数快照（任务创建时定格，不受渠道后续编辑/删除影响；绝不含 API key）
+	Target TaskTarget `json:"target"`
+}
+
+// QualityTaskCreate defines model for QualityTaskCreate.
+type QualityTaskCreate struct {
+	ChannelId    openapi_types.UUID `json:"channelId"`
+	ModelEntryId openapi_types.UUID `json:"modelEntryId"`
+	Params       *QualityTaskParams `json:"params,omitempty"`
+
+	// Probes 勾选的检测项 id 集合
+	Probes []string `json:"probes"`
+}
+
+// QualityTaskList defines model for QualityTaskList.
+type QualityTaskList struct {
+	Items []QualityTask `json:"items"`
+	Total int           `json:"total"`
+}
+
+// QualityTaskParams defines model for QualityTaskParams.
+type QualityTaskParams struct {
+	// Concurrency 任务内请求并发数
+	Concurrency *int `json:"concurrency,omitempty"`
+
+	// MaxCases 用例数上限（缺省=全量；超过检测项全量数时按全量算）
+	MaxCases *int `json:"maxCases,omitempty"`
+
+	// Reruns 失败用例重跑轮数（末次结果为准）
+	Reruns *int `json:"reruns,omitempty"`
+}
 
 // Role defines model for Role.
 type Role struct {
@@ -271,6 +468,48 @@ type RoleUpdate struct {
 
 	// Permissions 粗粒度模块权限开关：控制对应页面与该模块全部接口的访问
 	Permissions *PermissionMap `json:"permissions,omitempty"`
+}
+
+// TaskStatBucket defines model for TaskStatBucket.
+type TaskStatBucket struct {
+	Name     string `json:"name"`
+	Passed   int    `json:"passed"`
+	Rejected int    `json:"rejected"`
+	Total    int    `json:"total"`
+	Violated int    `json:"violated"`
+}
+
+// TaskStats defines model for TaskStats.
+type TaskStats struct {
+	ByMode []TaskStatBucket `json:"byMode"`
+
+	// ByReason 按选例理由（selection_reason）分桶
+	ByReason []TaskStatBucket `json:"byReason"`
+	Passed   int              `json:"passed"`
+	Rejected int              `json:"rejected"`
+	Total    int              `json:"total"`
+	Violated int              `json:"violated"`
+}
+
+// TaskStatus defines model for TaskStatus.
+type TaskStatus string
+
+// TaskTarget 检测对象参数快照（任务创建时定格，不受渠道后续编辑/删除影响；绝不含 API key）
+type TaskTarget struct {
+	BaseUrl          string   `json:"baseUrl"`
+	CachedInputPrice *float32 `json:"cachedInputPrice,omitempty"`
+
+	// ChannelId 原渠道 id（渠道被删后仅作历史参考）
+	ChannelId   *openapi_types.UUID `json:"channelId,omitempty"`
+	ChannelName string              `json:"channelName"`
+
+	// Currency 渠道定价币种（仅标注，不做汇率换算）
+	Currency     *Currency           `json:"currency,omitempty"`
+	InputPrice   *float32            `json:"inputPrice,omitempty"`
+	Model        string              `json:"model"`
+	ModelEntryId *openapi_types.UUID `json:"modelEntryId,omitempty"`
+	OutputPrice  *float32            `json:"outputPrice,omitempty"`
+	Protocols    []Protocol          `json:"protocols"`
 }
 
 // UpdateStatus defines model for UpdateStatus.
@@ -330,6 +569,17 @@ type NotFound = Error
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
 
+// ListQualityTasksParams defines parameters for ListQualityTasks.
+type ListQualityTasksParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// ListQualityTaskResultsParams defines parameters for ListQualityTaskResults.
+type ListQualityTaskResultsParams struct {
+	Status *CaseStatus `form:"status,omitempty" json:"status,omitempty"`
+}
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
@@ -350,6 +600,9 @@ type UpdateChannelModelJSONRequestBody = ModelEntryUpsert
 
 // TestChannelJSONRequestBody defines body for TestChannel for application/json ContentType.
 type TestChannelJSONRequestBody = ConnectivityTestRequest
+
+// CreateQualityTaskJSONRequestBody defines body for CreateQualityTask for application/json ContentType.
+type CreateQualityTaskJSONRequestBody = QualityTaskCreate
 
 // CreateRoleJSONRequestBody defines body for CreateRole for application/json ContentType.
 type CreateRoleJSONRequestBody = RoleCreate
@@ -410,6 +663,27 @@ type ServerInterface interface {
 	// GetHealthz 健康检查
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
+	// ListProbes 检测项注册表（需 quality 权限；含元数据供发起页勾选）
+	// (GET /probes)
+	ListProbes(w http.ResponseWriter, r *http.Request)
+	// ListQualityTasks 质量检测任务历史（需 quality 权限；按创建时间倒序）
+	// (GET /quality/tasks)
+	ListQualityTasks(w http.ResponseWriter, r *http.Request, params ListQualityTasksParams)
+	// CreateQualityTask 创建质量检测任务（需 quality 权限；创建时快照检测对象参数，入队后由 worker 执行）
+	// (POST /quality/tasks)
+	CreateQualityTask(w http.ResponseWriter, r *http.Request)
+	// GetQualityTask 任务详情（需 quality 权限；含参数快照与聚合统计）
+	// (GET /quality/tasks/{id})
+	GetQualityTask(w http.ResponseWriter, r *http.Request, id IdPath)
+	// CancelQualityTask 取消任务（需 quality 权限；仅排队中的任务可取消）
+	// (POST /quality/tasks/{id}/cancel)
+	CancelQualityTask(w http.ResponseWriter, r *http.Request, id IdPath)
+	// StreamQualityTaskEvents 任务进度事件流（需 quality 权限；SSE，连接后先推当前快照，任务终态后关闭）
+	// (GET /quality/tasks/{id}/events)
+	StreamQualityTaskEvents(w http.ResponseWriter, r *http.Request, id IdPath)
+	// ListQualityTaskResults 用例级结果（需 quality 权限；可按判定状态过滤）
+	// (GET /quality/tasks/{id}/results)
+	ListQualityTaskResults(w http.ResponseWriter, r *http.Request, id IdPath, params ListQualityTaskResultsParams)
 	// ListRoles 角色列表（需 users 权限）
 	// (GET /roles)
 	ListRoles(w http.ResponseWriter, r *http.Request)
@@ -743,6 +1017,200 @@ func (siw *ServerInterfaceWrapper) GetHealthz(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealthz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListProbes operation middleware
+func (siw *ServerInterfaceWrapper) ListProbes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProbes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListQualityTasks operation middleware
+func (siw *ServerInterfaceWrapper) ListQualityTasks(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListQualityTasksParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListQualityTasks(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateQualityTask operation middleware
+func (siw *ServerInterfaceWrapper) CreateQualityTask(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateQualityTask(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetQualityTask operation middleware
+func (siw *ServerInterfaceWrapper) GetQualityTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetQualityTask(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelQualityTask operation middleware
+func (siw *ServerInterfaceWrapper) CancelQualityTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelQualityTask(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StreamQualityTaskEvents operation middleware
+func (siw *ServerInterfaceWrapper) StreamQualityTaskEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StreamQualityTaskEvents(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListQualityTaskResults operation middleware
+func (siw *ServerInterfaceWrapper) ListQualityTaskResults(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListQualityTaskResultsParams
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListQualityTaskResults(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1099,6 +1567,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/channels/{id}/test", wrapper.TestChannel)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/update", wrapper.GetUpdateStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/update/deploy", wrapper.TriggerDeploy)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/probes", wrapper.ListProbes)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks", wrapper.ListQualityTasks)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/quality/tasks", wrapper.CreateQualityTask)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks/{id}", wrapper.GetQualityTask)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks/{id}/results", wrapper.ListQualityTaskResults)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/quality/tasks/{id}/cancel", wrapper.CancelQualityTask)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks/{id}/events", wrapper.StreamQualityTaskEvents)
 
 	return m
 }

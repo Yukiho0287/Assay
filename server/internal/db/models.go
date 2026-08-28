@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Channel struct {
@@ -47,6 +48,41 @@ type Session struct {
 	UserID    uuid.UUID
 	CreatedAt time.Time
 	ExpiresAt time.Time
+}
+
+type Task struct {
+	ID            uuid.UUID
+	Kind          string
+	Status        string
+	ChannelID     pgtype.UUID
+	Target        []byte
+	Probes        []string
+	Params        []byte
+	ProgressTotal int32
+	ProgressDone  int32
+	RiverJobID    pgtype.Int8
+	Error         *string
+	CreatedBy     pgtype.UUID
+	CreatedAt     time.Time
+	StartedAt     pgtype.Timestamptz
+	FinishedAt    pgtype.Timestamptz
+}
+
+type TaskCaseResult struct {
+	ID              int64
+	TaskID          uuid.UUID
+	Probe           string
+	Suite           string
+	Line            int32
+	Mode            string
+	SelectionReason string
+	Status          string
+	Message         string
+	HttpStatus      pgtype.Int4
+	LatencyMs       pgtype.Int4
+	Arguments       *string
+	Attempts        int32
+	CreatedAt       time.Time
 }
 
 type User struct {

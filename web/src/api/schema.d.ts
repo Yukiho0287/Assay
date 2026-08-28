@@ -301,6 +301,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/probes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 检测项注册表（需 quality 权限；含元数据供发起页勾选） */
+        get: operations["listProbes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/quality/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 质量检测任务历史（需 quality 权限；按创建时间倒序） */
+        get: operations["listQualityTasks"];
+        put?: never;
+        /** 创建质量检测任务（需 quality 权限；创建时快照检测对象参数，入队后由 worker 执行） */
+        post: operations["createQualityTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/quality/tasks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 任务详情（需 quality 权限；含参数快照与聚合统计） */
+        get: operations["getQualityTask"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/quality/tasks/{id}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 用例级结果（需 quality 权限；可按判定状态过滤） */
+        get: operations["listQualityTaskResults"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/quality/tasks/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 取消任务（需 quality 权限；仅排队中的任务可取消） */
+        post: operations["cancelQualityTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/quality/tasks/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 任务进度事件流（需 quality 权限；SSE，连接后先推当前快照，任务终态后关闭） */
+        get: operations["streamQualityTaskEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -476,6 +579,145 @@ export interface components {
             ttftMs?: number;
             /** @description 失败摘要（超时/连接错误/上游错误体截断） */
             error?: string;
+        };
+        /**
+         * @description 烧钱等级（便宜的挡在贵的前面）
+         * @enum {string}
+         */
+        CostTier: "cheap" | "medium" | "expensive";
+        ProbeInfo: {
+            /** @description 检测项唯一标识（如 tool_call_json_schema） */
+            id: string;
+            /** @description 中文显示名 */
+            name: string;
+            description: string;
+            costTier: components["schemas"]["CostTier"];
+            /** @description 适用协议（渠道须至少声明其中之一） */
+            protocols: components["schemas"]["Protocol"][];
+            /** @description 是否需要对照渠道 */
+            needsControl: boolean;
+            /** @description 是否要求目标模型已定价 */
+            needsPricing: boolean;
+            /** @description 全量用例数（每用例跑非流式+流式两种模式） */
+            caseCount: number;
+        };
+        /** @enum {string} */
+        TaskStatus: "queued" | "running" | "succeeded" | "failed" | "canceled";
+        /**
+         * @description 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规
+         * @enum {string}
+         */
+        CaseStatus: "passed" | "rejected" | "violated";
+        /** @enum {string} */
+        CaseMode: "non_stream" | "stream";
+        QualityTaskParams: {
+            /**
+             * @description 任务内请求并发数
+             * @default 4
+             */
+            concurrency: number;
+            /**
+             * @description 失败用例重跑轮数（末次结果为准）
+             * @default 2
+             */
+            reruns: number;
+            /** @description 用例数上限（缺省=全量；超过检测项全量数时按全量算） */
+            maxCases?: number;
+        };
+        QualityTaskCreate: {
+            /** Format: uuid */
+            channelId: string;
+            /** Format: uuid */
+            modelEntryId: string;
+            /** @description 勾选的检测项 id 集合 */
+            probes: string[];
+            params?: components["schemas"]["QualityTaskParams"];
+        };
+        /** @description 检测对象参数快照（任务创建时定格，不受渠道后续编辑/删除影响；绝不含 API key） */
+        TaskTarget: {
+            /**
+             * Format: uuid
+             * @description 原渠道 id（渠道被删后仅作历史参考）
+             */
+            channelId?: string;
+            channelName: string;
+            baseUrl: string;
+            /** Format: uuid */
+            modelEntryId?: string;
+            model: string;
+            protocols: components["schemas"]["Protocol"][];
+            currency?: components["schemas"]["Currency"];
+            inputPrice?: number;
+            outputPrice?: number;
+            cachedInputPrice?: number;
+        };
+        TaskStatBucket: {
+            name: string;
+            total: number;
+            passed: number;
+            rejected: number;
+            violated: number;
+        };
+        TaskStats: {
+            total: number;
+            passed: number;
+            rejected: number;
+            violated: number;
+            byMode: components["schemas"]["TaskStatBucket"][];
+            /** @description 按选例理由（selection_reason）分桶 */
+            byReason: components["schemas"]["TaskStatBucket"][];
+        };
+        QualityTask: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["TaskStatus"];
+            target: components["schemas"]["TaskTarget"];
+            probes: string[];
+            /** @description 生效参数（缺省项已填入默认值） */
+            params: components["schemas"]["QualityTaskParams"];
+            progressTotal: number;
+            progressDone: number;
+            /** @description 任务级失败原因（用例级失败不算任务失败） */
+            error?: string;
+            /** @description 创建者用户名（用户被删后缺省） */
+            createdBy?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            finishedAt?: string;
+            /** @description 聚合统计（仅详情接口返回，任务未产生结果时缺省） */
+            stats?: components["schemas"]["TaskStats"];
+        };
+        QualityTaskList: {
+            items: components["schemas"]["QualityTask"][];
+            total: number;
+        };
+        QualityCaseResult: {
+            probe: string;
+            /** @description 语料套件名（如 TestEnforcerCases） */
+            suite: string;
+            /** @description 套件内行号（1 起，与 KVV 官方报告对齐） */
+            line: number;
+            mode: components["schemas"]["CaseMode"];
+            selectionReason: string;
+            status: components["schemas"]["CaseStatus"];
+            /** @description 失败摘要（校验错误/上游错误体截断；通过时为空） */
+            message: string;
+            httpStatus?: number;
+            latencyMs?: number;
+            /** @description 模型最终产出的工具参数原文（截断存储） */
+            arguments?: string;
+            attempts: number;
+        };
+        /** @description SSE data 帧载荷 */
+        TaskProgressEvent: {
+            /** Format: uuid */
+            taskId: string;
+            status: components["schemas"]["TaskStatus"];
+            done: number;
+            total: number;
         };
         Error: {
             error: string;
@@ -1246,6 +1488,201 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    listProbes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 全部已注册检测项 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeInfo"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listQualityTasks: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务列表分页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityTaskList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createQualityTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QualityTaskCreate"];
+            };
+        };
+        responses: {
+            /** @description 任务已创建并入队 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityTask"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 渠道已停用或不支持检测项所需协议 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getQualityTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityTask"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listQualityTaskResults: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["CaseStatus"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 用例结果列表（按套件/行号/模式排序） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityCaseResult"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    cancelQualityTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 取消后的任务 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityTask"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 任务已开始或已结束，不可取消 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    streamQualityTaskEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream，每帧 data 为 TaskProgressEvent 的 JSON */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
 }

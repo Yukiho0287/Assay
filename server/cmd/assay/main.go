@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/coreos/go-systemd/v22/activation"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/Yukiho0287/assay/server/internal/config"
 	"github.com/Yukiho0287/assay/server/internal/db"
 	"github.com/Yukiho0287/assay/server/internal/httpserver"
+	"github.com/Yukiho0287/assay/server/internal/tasks"
 	"github.com/Yukiho0287/assay/server/internal/update"
 	"github.com/Yukiho0287/assay/server/internal/version"
 )
@@ -100,10 +102,28 @@ func serve() {
 
 	gh := update.New(cfg.GitHubRepo, cfg.GitHubToken)
 
+	// 进程内任务 worker：Start 先清扫孤儿任务再取活；SIGTERM 时 ctx 取消触发软停
+	tq, err := tasks.New(pool, log)
+	if err != nil {
+		log.Error("任务队列初始化失败", "err", err)
+		os.Exit(1)
+	}
+	if err := tq.Start(ctx); err != nil {
+		log.Error("任务 worker 启动失败", "err", err)
+		os.Exit(1)
+	}
+
 	log.Info("assay 启动", "version", version.Version)
-	if err := httpserver.New(cfg.Addr, log, pool, gh).Run(ctx, ln); err != nil {
+	if err := httpserver.New(cfg.Addr, log, pool, gh, tq).Run(ctx, ln); err != nil {
 		log.Error("http server exited", "err", err)
 		os.Exit(1)
+	}
+
+	// http 已停止接新请求，再等 worker 收尾（SoftStopTimeout 5s 后硬停，重启后自动重跑）
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancelStop()
+	if err := tq.Stop(stopCtx); err != nil {
+		log.Warn("任务 worker 停机未干净退出", "err", err)
 	}
 	log.Info("shutdown complete")
 }

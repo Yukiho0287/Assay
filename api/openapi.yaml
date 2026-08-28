@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Assay API
   description: LLM 渠道检测平台 API。本文件是前后端契约的唯一真相源（契约优先）。
-  version: 0.3.0
+  version: 0.4.0
 servers:
   - url: /api
 paths:
@@ -562,6 +562,177 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /probes:
+    get:
+      operationId: listProbes
+      summary: 检测项注册表（需 quality 权限；含元数据供发起页勾选）
+      tags: [quality]
+      responses:
+        "200":
+          description: 全部已注册检测项
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProbeInfo"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /quality/tasks:
+    post:
+      operationId: createQualityTask
+      summary: 创建质量检测任务（需 quality 权限；创建时快照检测对象参数，入队后由 worker 执行）
+      tags: [quality]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QualityTaskCreate"
+      responses:
+        "201":
+          description: 任务已创建并入队
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityTask"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: 渠道已停用或不支持检测项所需协议
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listQualityTasks
+      summary: 质量检测任务历史（需 quality 权限；按创建时间倒序）
+      tags: [quality]
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: 任务列表分页
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityTaskList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /quality/tasks/{id}:
+    get:
+      operationId: getQualityTask
+      summary: 任务详情（需 quality 权限；含参数快照与聚合统计）
+      tags: [quality]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: 任务详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityTask"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /quality/tasks/{id}/results:
+    get:
+      operationId: listQualityTaskResults
+      summary: 用例级结果（需 quality 权限；可按判定状态过滤）
+      tags: [quality]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/CaseStatus"
+      responses:
+        "200":
+          description: 用例结果列表（按套件/行号/模式排序）
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/QualityCaseResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /quality/tasks/{id}/cancel:
+    post:
+      operationId: cancelQualityTask
+      summary: 取消任务（需 quality 权限；仅排队中的任务可取消）
+      tags: [quality]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: 取消后的任务
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityTask"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: 任务已开始或已结束，不可取消
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /quality/tasks/{id}/events:
+    get:
+      operationId: streamQualityTaskEvents
+      summary: 任务进度事件流（需 quality 权限；SSE，连接后先推当前快照，任务终态后关闭）
+      tags: [quality]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: text/event-stream，每帧 data 为 TaskProgressEvent 的 JSON
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 components:
   parameters:
     IdPath:
@@ -944,6 +1115,244 @@ components:
         error:
           description: 失败摘要（超时/连接错误/上游错误体截断）
           type: string
+    CostTier:
+      description: 烧钱等级（便宜的挡在贵的前面）
+      type: string
+      enum: [cheap, medium, expensive]
+    ProbeInfo:
+      type: object
+      required: [id, name, description, costTier, protocols, needsControl, needsPricing, caseCount]
+      properties:
+        id:
+          description: 检测项唯一标识（如 tool_call_json_schema）
+          type: string
+        name:
+          description: 中文显示名
+          type: string
+        description:
+          type: string
+        costTier:
+          $ref: "#/components/schemas/CostTier"
+        protocols:
+          description: 适用协议（渠道须至少声明其中之一）
+          type: array
+          items:
+            $ref: "#/components/schemas/Protocol"
+        needsControl:
+          description: 是否需要对照渠道
+          type: boolean
+        needsPricing:
+          description: 是否要求目标模型已定价
+          type: boolean
+        caseCount:
+          description: 全量用例数（每用例跑非流式+流式两种模式）
+          type: integer
+    TaskStatus:
+      type: string
+      enum: [queued, running, succeeded, failed, canceled]
+    CaseStatus:
+      description: 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规
+      type: string
+      enum: [passed, rejected, violated]
+    CaseMode:
+      type: string
+      enum: [non_stream, stream]
+    QualityTaskParams:
+      type: object
+      properties:
+        concurrency:
+          description: 任务内请求并发数
+          type: integer
+          minimum: 1
+          maximum: 16
+          default: 4
+        reruns:
+          description: 失败用例重跑轮数（末次结果为准）
+          type: integer
+          minimum: 0
+          maximum: 5
+          default: 2
+        maxCases:
+          description: 用例数上限（缺省=全量；超过检测项全量数时按全量算）
+          type: integer
+          minimum: 1
+    QualityTaskCreate:
+      type: object
+      required: [channelId, modelEntryId, probes]
+      properties:
+        channelId:
+          type: string
+          format: uuid
+        modelEntryId:
+          type: string
+          format: uuid
+        probes:
+          description: 勾选的检测项 id 集合
+          type: array
+          minItems: 1
+          items:
+            type: string
+        params:
+          $ref: "#/components/schemas/QualityTaskParams"
+    TaskTarget:
+      description: 检测对象参数快照（任务创建时定格，不受渠道后续编辑/删除影响；绝不含 API key）
+      type: object
+      required: [channelName, baseUrl, model, protocols]
+      properties:
+        channelId:
+          description: 原渠道 id（渠道被删后仅作历史参考）
+          type: string
+          format: uuid
+        channelName:
+          type: string
+        baseUrl:
+          type: string
+        modelEntryId:
+          type: string
+          format: uuid
+        model:
+          type: string
+        protocols:
+          type: array
+          items:
+            $ref: "#/components/schemas/Protocol"
+        currency:
+          $ref: "#/components/schemas/Currency"
+        inputPrice:
+          type: number
+        outputPrice:
+          type: number
+        cachedInputPrice:
+          type: number
+    TaskStatBucket:
+      type: object
+      required: [name, total, passed, rejected, violated]
+      properties:
+        name:
+          type: string
+        total:
+          type: integer
+        passed:
+          type: integer
+        rejected:
+          type: integer
+        violated:
+          type: integer
+    TaskStats:
+      type: object
+      required: [total, passed, rejected, violated, byMode, byReason]
+      properties:
+        total:
+          type: integer
+        passed:
+          type: integer
+        rejected:
+          type: integer
+        violated:
+          type: integer
+        byMode:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskStatBucket"
+        byReason:
+          description: 按选例理由（selection_reason）分桶
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskStatBucket"
+    QualityTask:
+      type: object
+      required: [id, status, target, probes, params, progressTotal, progressDone, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        target:
+          $ref: "#/components/schemas/TaskTarget"
+        probes:
+          type: array
+          items:
+            type: string
+        params:
+          description: 生效参数（缺省项已填入默认值）
+          $ref: "#/components/schemas/QualityTaskParams"
+        progressTotal:
+          type: integer
+        progressDone:
+          type: integer
+        error:
+          description: 任务级失败原因（用例级失败不算任务失败）
+          type: string
+        createdBy:
+          description: 创建者用户名（用户被删后缺省）
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        stats:
+          description: 聚合统计（仅详情接口返回，任务未产生结果时缺省）
+          $ref: "#/components/schemas/TaskStats"
+    QualityTaskList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/QualityTask"
+        total:
+          type: integer
+    QualityCaseResult:
+      type: object
+      required: [probe, suite, line, mode, selectionReason, status, message, attempts]
+      properties:
+        probe:
+          type: string
+        suite:
+          description: 语料套件名（如 TestEnforcerCases）
+          type: string
+        line:
+          description: 套件内行号（1 起，与 KVV 官方报告对齐）
+          type: integer
+        mode:
+          $ref: "#/components/schemas/CaseMode"
+        selectionReason:
+          type: string
+        status:
+          $ref: "#/components/schemas/CaseStatus"
+        message:
+          description: 失败摘要（校验错误/上游错误体截断；通过时为空）
+          type: string
+        httpStatus:
+          type: integer
+        latencyMs:
+          type: integer
+        arguments:
+          description: 模型最终产出的工具参数原文（截断存储）
+          type: string
+        attempts:
+          type: integer
+    TaskProgressEvent:
+      description: SSE data 帧载荷
+      type: object
+      required: [taskId, status, done, total]
+      properties:
+        taskId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        done:
+          type: integer
+        total:
+          type: integer
     Error:
       type: object
       required: [error]

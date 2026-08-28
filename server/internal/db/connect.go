@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib" // goose 迁移走 database/sql 驱动
 	"github.com/pressly/goose/v3"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
 )
 
 //go:embed migrations/*.sql
@@ -34,17 +36,39 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// Migrate 应用全部未执行的迁移（也供 assay migrate up 子命令使用）。
+// Migrate 应用全部未执行的迁移（也供 assay migrate up 子命令使用）：
+// 先跑 goose 业务迁移，再跑 River 队列自带迁移（river_job 等表）。
 func Migrate(url string) error {
 	sqlDB, err := openGoose(url)
 	if err != nil {
 		return err
 	}
 	defer sqlDB.Close()
-	return goose.Up(sqlDB, "migrations")
+	if err := goose.Up(sqlDB, "migrations"); err != nil {
+		return err
+	}
+	return riverMigrate(url)
 }
 
-// PendingMigrations 返回尚未应用的迁移数，不执行任何迁移。
+// riverMigrate 应用 River 队列的库表迁移（幂等，已最新则空跑）。
+func riverMigrate(url string) error {
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		return fmt.Errorf("river 迁移连接: %w", err)
+	}
+	defer pool.Close()
+	migrator, err := rivermigrate.New(riverpgxv5.New(pool), &rivermigrate.Config{})
+	if err != nil {
+		return fmt.Errorf("river 迁移器初始化: %w", err)
+	}
+	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, &rivermigrate.MigrateOpts{}); err != nil {
+		return fmt.Errorf("river 迁移执行: %w", err)
+	}
+	return nil
+}
+
+// PendingMigrations 返回尚未应用的迁移数（goose 业务迁移 + River 队列迁移）。
 // 部署脚本据此选择路径：0 = 热重启，>0 = 备份 + 短停机迁移。
 func PendingMigrations(url string) (int, error) {
 	sqlDB, err := openGoose(url)
@@ -67,7 +91,31 @@ func PendingMigrations(url string) (int, error) {
 			n++
 		}
 	}
-	return n, nil
+
+	riverPending, err := pendingRiverMigrations(url)
+	if err != nil {
+		return 0, err
+	}
+	return n + riverPending, nil
+}
+
+func pendingRiverMigrations(url string) (int, error) {
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		return 0, fmt.Errorf("river 迁移连接: %w", err)
+	}
+	defer pool.Close()
+	migrator, err := rivermigrate.New(riverpgxv5.New(pool), &rivermigrate.Config{})
+	if err != nil {
+		return 0, fmt.Errorf("river 迁移器初始化: %w", err)
+	}
+	// river_migration 表不存在时 ExistingVersions 返回空集而非报错，全部版本都算待应用
+	existing, err := migrator.ExistingVersions(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("river 已应用版本查询: %w", err)
+	}
+	return len(migrator.AllVersions()) - len(existing), nil
 }
 
 func openGoose(url string) (*sql.DB, error) {
