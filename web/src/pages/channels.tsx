@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { channelsApi } from '@/lib/api'
 import { type DictKey, useI18n } from '@/lib/i18n'
 
@@ -62,6 +63,7 @@ export default function ChannelsPage() {
                 <TableRow>
                   <TableHead>{t('channels.name')}</TableHead>
                   <TableHead>{t('channels.baseUrl')}</TableHead>
+                  <TableHead>{t('channels.note')}</TableHead>
                   <TableHead>{t('channels.protocols')}</TableHead>
                   <TableHead className="text-right">{t('channels.modelCount')}</TableHead>
                   <TableHead>{t('channels.currency')}</TableHead>
@@ -86,6 +88,18 @@ export default function ChannelsPage() {
                     </TableCell>
                     <TableCell className="max-w-64 truncate text-muted-foreground">
                       {c.baseUrl}
+                    </TableCell>
+                    <TableCell className="max-w-40">
+                      {c.note && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="block truncate text-muted-foreground">{c.note}</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="whitespace-pre-wrap break-words">
+                            {c.note}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
