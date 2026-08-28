@@ -37,7 +37,8 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-svh items-center justify-center bg-muted/40 p-6">
       <Card className="w-full max-w-sm">
-        <CardHeader>
+        <CardHeader className="items-center text-center">
+          <img src="/logo.png" alt="Assay" className="mx-auto mb-2 size-16 rounded-2xl" />
           <CardTitle className="text-xl">Assay</CardTitle>
           <CardDescription>{t('login.desc')}</CardDescription>
         </CardHeader>

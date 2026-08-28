@@ -17,3 +17,6 @@ server/internal/web/dist/
 .playwright-mcp/
 .DS_Store
 CONTEXT.md
+
+# 生图中间产物（logo 源图等，仅本地留档）
+output/

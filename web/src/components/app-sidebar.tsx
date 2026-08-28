@@ -49,11 +49,7 @@ export function AppSidebar({ user, onLogout, onOpenUpdate }: AppSidebarProps) {
   const { toggleSidebar } = useSidebar()
   const { t } = useI18n()
 
-  const logo = (
-    <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary font-semibold text-primary-foreground">
-      A
-    </div>
-  )
+  const logo = <img src="/logo.png" alt="Assay" className="size-8 shrink-0 rounded-lg" />
 
   return (
     <Sidebar collapsible="icon">
