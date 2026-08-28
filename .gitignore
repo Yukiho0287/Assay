@@ -1,2 +1,17 @@
+# 本地文档与项目指令，不进远端
 docs/
 CLAUDE.md
+
+# 依赖与构建产物
+node_modules/
+web/dist/
+server/assay
+*.tsbuildinfo
+
+# 环境变量与凭证
+.env
+.env.*
+
+# 工具产物
+.playwright-mcp/
+.DS_Store

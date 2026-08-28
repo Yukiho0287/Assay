@@ -1,0 +1,7 @@
+# oapi-codegen 配置：从 api/openapi.yaml 生成 Go 服务端接口与模型
+# 生成命令见 internal/api/gen.go 的 go:generate
+package: api
+generate:
+  std-http-server: true
+  models: true
+output: api.gen.go

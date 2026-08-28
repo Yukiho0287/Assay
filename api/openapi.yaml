@@ -1,0 +1,29 @@
+openapi: 3.0.3
+info:
+  title: Assay API
+  description: LLM 渠道检测平台 API。本文件是前后端契约的唯一真相源（契约优先）。
+  version: 0.1.0
+servers:
+  - url: /api
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: 健康检查
+      tags: [system]
+      responses:
+        "200":
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+components:
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
