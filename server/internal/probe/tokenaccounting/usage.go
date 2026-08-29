@@ -15,12 +15,12 @@ type usageData struct {
 	Prompt     int64
 	Completion int64
 	Total      int64
-	Cached     int64  // -1 = 渠道未返回缓存计数；仅记录不断言（缓存记账属第三梯队）
+	Cached     int64  // -1 = 渠道未返回缓存计数；仅记录不断言（缓存计量属第三梯队）
 	Raw        string // usage 对象原始 JSON（json.Number 回写，数字字面量无损）
 }
 
 // parseUsage 校验 usage 对象含完整三元组整数。
-// 返回 violation 非空 = 结构不合规（200 但记账数据缺损，是被测行为）。
+// 返回 violation 非空 = 结构不合规（200 但计量数据缺损，是被测行为）。
 func parseUsage(v any) (usageData, string) {
 	m, ok := v.(map[string]any)
 	if !ok {

@@ -1,4 +1,4 @@
-// Package tokenaccounting 实现「token 记账自洽」检测项：
+// Package tokenaccounting 实现「Token 计量检定」检测项：
 // 测渠道返回的 usage 计数是否数学自洽（恒等式 / 纯 ASCII 上限 / 确定性 / 恒定边际率），
 // 不与任何官方值对比，零对照、近零成本。算法移植自 KVV 验证专项的 marginal_rate.py
 // （知识库 §5 第一层自洽性 + §3.2 分词器三铁律）。

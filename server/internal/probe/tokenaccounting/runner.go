@@ -61,14 +61,14 @@ func slotDefs() []slotDef {
 	return defs
 }
 
-// New 注册「token 记账自洽」检测项。
+// New 注册「Token 计量检定」检测项。
 func New() probe.Probe {
 	defs := slotDefs()
 	return probe.Probe{
 		Info: probe.Info{
 			ID:               probeID,
-			Name:             "token 记账自洽",
-			Description:      "向渠道发送确定性纯 ASCII 样本（4 档长度 + 同文三连发 + 流式/非流式对照，共 9 个 max_tokens=4 的最小请求），校验 usage 记账是否数学自洽：total=prompt+completion 恒等式、纯 ASCII token 上限、同字节同计数、恒定边际率与漂移。只测自洽不比官方，无需对照渠道。",
+			Name:             "Token 计量检定",
+			Description:      "向渠道发送确定性纯 ASCII 样本（4 档长度 + 同文三连发 + 流式/非流式对照，共 9 个 max_tokens=4 的最小请求），检定渠道 token 计量（usage）是否数学自洽：total=prompt+completion 恒等式、纯 ASCII token 上限、同字节同计数、恒定边际率与漂移。只测自洽不比官方，无需对照渠道。",
 			CostTier:         "cheap",
 			Protocols:        []string{"openai_chat"},
 			CaseCount:        len(defs),

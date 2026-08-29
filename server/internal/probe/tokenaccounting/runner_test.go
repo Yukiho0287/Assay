@@ -14,7 +14,7 @@ import (
 	"github.com/Yukiho0287/assay/server/internal/probe"
 )
 
-// fakeVendor 可配置假上游。默认记账完全自洽：pt = 50 + chars/4（边际率 0.25、漂移 0）。
+// fakeVendor 可配置假上游。默认计量完全自洽：pt = 50 + chars/4（边际率 0.25、漂移 0）。
 // 同时校验请求形状（max_tokens=4、无 temperature、流式必须带 include_usage），
 // 形状不对返回 400 —— 负向测试一等公民：探针发错请求必须在测试里炸出来。
 type fakeVendor struct {
