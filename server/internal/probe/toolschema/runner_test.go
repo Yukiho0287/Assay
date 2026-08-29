@@ -25,7 +25,7 @@ func runFake(t *testing.T, handler http.Handler, params probe.Params) map[string
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	schema, err := decodeUseNumber([]byte(testSchemaJSON))
+	schema, err := probe.DecodeUseNumber([]byte(testSchemaJSON))
 	if err != nil {
 		t.Fatal(err)
 	}

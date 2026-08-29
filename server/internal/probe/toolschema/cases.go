@@ -9,7 +9,6 @@
 package toolschema
 
 import (
-	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -17,6 +16,8 @@ import (
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/Yukiho0287/assay/server/internal/probe"
 )
 
 //go:embed corpus/*/valid.jsonl
@@ -87,7 +88,7 @@ func loadCases() ([]Case, error) {
 // classifyCase 移植 validator.py classify_case：解析 → 跳过判定 → 选例理由 → 包装 → 剥 default。
 // 返回 ok=false 表示该行跳过（unsupported_by_transport）。
 func classifyCase(line string) (Case, bool) {
-	schema, err := decodeUseNumber([]byte(line))
+	schema, err := probe.DecodeUseNumber([]byte(line))
 	if err != nil {
 		return Case{}, false // 解析失败 → 跳过
 	}
@@ -117,7 +118,7 @@ func classifyCase(line string) (Case, bool) {
 func selectionReason(schema any, rawLine string) string {
 	// Python 用 json.dumps(schema).lower() 做子串匹配；这里用 Go 序列化（键序不同但
 	// 关键词是键名/值子串匹配，与键顺序无关，结果一致——金标分布逐项相等为证）
-	serialized, err := marshalNoEscape(schema)
+	serialized, err := probe.MarshalNoEscape(schema)
 	if err != nil {
 		serialized = []byte(rawLine)
 	}
@@ -458,32 +459,6 @@ func numberValue(v any) float64 {
 		}
 	}
 	return 0
-}
-
-// decodeUseNumber 解码 JSON，数字保留为 json.Number（回写时按原文字面量输出，无精度损失）。
-func decodeUseNumber(data []byte) (any, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var v any
-	if err := dec.Decode(&v); err != nil {
-		return nil, err
-	}
-	// 拒绝尾随内容（"1} junk" 这类应视为解析失败，与 Python json.loads 一致）
-	if dec.More() {
-		return nil, fmt.Errorf("JSON 后有多余内容")
-	}
-	return v, nil
-}
-
-// marshalNoEscape 序列化且不做 HTML 转义（< > & 原样输出，保字节保真），末尾不带换行。
-func marshalNoEscape(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // compileSchema 用 Draft 2020-12 编译包装后 schema（语料已核验无 $schema 键，默认草案即 2020-12，

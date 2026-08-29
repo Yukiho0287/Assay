@@ -85,9 +85,16 @@ export default function QualityPage() {
   }
 
   const maxCasesNum = maxCases === '' ? undefined : Number(maxCases)
+  // 受用例数上限影响的检测项按 min(上限, 全量) 估算；固定请求矩阵的按全量
   const estRequests = (probes.data ?? [])
     .filter((p) => checked.includes(p.id))
-    .reduce((sum, p) => sum + Math.min(maxCasesNum || p.caseCount, p.caseCount) * 2, 0)
+    .reduce(
+      (sum, p) =>
+        sum +
+        (p.supportsMaxCases ? Math.min(maxCasesNum || p.caseCount, p.caseCount) : p.caseCount) *
+          p.requestsPerCase,
+      0,
+    )
 
   const submit = () => {
     create.mutate({
@@ -189,6 +196,8 @@ export default function QualityPage() {
                         <CostTierBadge tier={p.costTier} />
                         <span className="text-xs font-normal text-muted-foreground">
                           {p.caseCount} {t('quality.cases')}
+                          {p.requestsPerCase > 1 &&
+                            ` · ${p.caseCount * p.requestsPerCase} ${t('quality.requests')}`}
                         </span>
                         {p.needsPricing && (
                           <span className="text-xs font-normal text-muted-foreground">

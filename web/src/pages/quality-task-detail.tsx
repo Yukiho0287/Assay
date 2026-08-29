@@ -197,7 +197,7 @@ function SnapshotCard({
   ]
   if (tg.inputPrice != null) {
     rows.push([
-      t('models.title'),
+      t('quality.pricing'),
       `${t('models.inputPrice')} ${symbol}${tg.inputPrice} · ${t('models.outputPrice')} ${symbol}${tg.outputPrice}` +
         (tg.cachedInputPrice != null
           ? ` · ${t('models.cachedInputPrice')} ${symbol}${tg.cachedInputPrice}`

@@ -343,7 +343,7 @@ type PermissionMap struct {
 
 // ProbeInfo defines model for ProbeInfo.
 type ProbeInfo struct {
-	// CaseCount 全量用例数（每用例跑非流式+流式两种模式）
+	// CaseCount 全量用例数
 	CaseCount int `json:"caseCount"`
 
 	// CostTier 烧钱等级（便宜的挡在贵的前面）
@@ -364,6 +364,12 @@ type ProbeInfo struct {
 
 	// Protocols 适用协议（渠道须至少声明其中之一）
 	Protocols []Protocol `json:"protocols"`
+
+	// RequestsPerCase 每用例请求数（如 toolschema 非流式+流式各一次 = 2），用于前端估算请求量
+	RequestsPerCase int `json:"requestsPerCase"`
+
+	// SupportsMaxCases 是否受任务参数「用例数上限」影响（固定请求矩阵的检测项为 false）
+	SupportsMaxCases bool `json:"supportsMaxCases"`
 }
 
 // Protocol 渠道支持的接口协议

@@ -39,12 +39,14 @@ func New() probe.Probe {
 	caseCount := len(SelectedCases())
 	return probe.Probe{
 		Info: probe.Info{
-			ID:          probeID,
-			Name:        "工具调用 JSON Schema 遵从",
-			Description: "发送带 JSON Schema 约束的工具定义（tool_choice=required），校验模型返回的工具调用参数是否符合 Draft 2020-12 Schema。每个用例分别以非流式与流式各测一次。移植自 KVV tool_call_json_schema。",
-			CostTier:    "medium",
-			Protocols:   []string{"openai_chat"},
-			CaseCount:   caseCount,
+			ID:               probeID,
+			Name:             "工具调用 JSON Schema 遵从",
+			Description:      "发送带 JSON Schema 约束的工具定义（tool_choice=required），校验模型返回的工具调用参数是否符合 Draft 2020-12 Schema。每个用例分别以非流式与流式各测一次。移植自 KVV tool_call_json_schema。",
+			CostTier:         "medium",
+			Protocols:        []string{"openai_chat"},
+			CaseCount:        caseCount,
+			RequestsPerCase:  2, // 非流式 + 流式
+			SupportsMaxCases: true,
 		},
 		SlotCount: func(p probe.Params) int {
 			n := caseCount
@@ -152,16 +154,17 @@ func (st *runState) runRound(ctx context.Context, pending []*slotState, concurre
 			if err := st.in.Report(gctx, res); err != nil {
 				return fmt.Errorf("结果落库失败: %w", err)
 			}
+			// 进度回调必须在锁内：保证 done 的落库按递增序发生，
+			// 否则并发完成时旧值可能后写，任务终态进度停在中间值
 			st.mu.Lock()
 			if !s.counted {
 				s.counted = true
 				st.done++
 			}
-			done := st.done
-			st.mu.Unlock()
 			if st.in.Progress != nil {
-				st.in.Progress(gctx, done, st.total)
+				st.in.Progress(gctx, st.done, st.total)
 			}
+			st.mu.Unlock()
 			return nil
 		})
 	}
@@ -188,7 +191,7 @@ func (st *runState) runCase(ctx context.Context, s *slotState) probe.CaseResult 
 		return res
 	}
 
-	payload, err := marshalNoEscape(requestBody(st.in.Target.Model, c.Schema, s.mode == probe.ModeStream))
+	payload, err := probe.MarshalNoEscape(requestBody(st.in.Target.Model, c.Schema, s.mode == probe.ModeStream))
 	if err != nil {
 		return rejected("构造请求失败: " + err.Error())
 	}
@@ -234,7 +237,7 @@ func (st *runState) runCase(ctx context.Context, s *slotState) probe.CaseResult 
 	}
 
 	res.Arguments = truncateRunes(arguments, 1000)
-	inst, err := decodeUseNumber([]byte(arguments))
+	inst, err := probe.DecodeUseNumber([]byte(arguments))
 	if err != nil {
 		return violated("arguments 不是合法 JSON: " + err.Error())
 	}
@@ -277,7 +280,7 @@ func extractNonStreamArguments(body io.Reader) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	doc, err := decodeUseNumber(data)
+	doc, err := probe.DecodeUseNumber(data)
 	if err != nil {
 		return "", "", fmt.Errorf("响应体不是 JSON: %w", err)
 	}
@@ -300,7 +303,7 @@ func extractNonStreamArguments(body io.Reader) (string, string, error) {
 			return s, "", nil
 		}
 		// arguments 非字符串：序列化后照常校验（KVV 同行为）
-		b, err := marshalNoEscape(args)
+		b, err := probe.MarshalNoEscape(args)
 		if err != nil {
 			return "", "arguments 无法序列化: " + err.Error(), nil
 		}
@@ -328,7 +331,7 @@ func extractStreamArguments(body io.Reader) (string, string, error) {
 		if payload == "" || payload == "[DONE]" {
 			continue
 		}
-		chunk, err := decodeUseNumber([]byte(payload))
+		chunk, err := probe.DecodeUseNumber([]byte(payload))
 		if err != nil {
 			// 分片坏损属传输层问题（OpenAI SDK 同样会抛错），判 rejected
 			return "", "", fmt.Errorf("流式分片不是 JSON: %w", err)
@@ -395,7 +398,7 @@ func asList(v any) []any {
 
 // previewJSON 字段值序列化后截断，用于 violation 消息里附带证据。
 func previewJSON(v any) string {
-	b, err := marshalNoEscape(v)
+	b, err := probe.MarshalNoEscape(v)
 	if err != nil {
 		return fmt.Sprintf("%v", v)
 	}

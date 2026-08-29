@@ -25,7 +25,7 @@ type Client struct {
 }
 
 // New 构建队列客户端 + 进程内 worker。MaxWorkers=1：单实例同时只跑一个任务
-//（任务内部再按 params.concurrency 扇出请求），蓝绿双实例期间靠 River 的
+// （任务内部再按 params.concurrency 扇出请求），蓝绿双实例期间靠 River 的
 // job 级锁保证同一任务不被双跑。
 func New(pool *pgxpool.Pool, log *slog.Logger) (*Client, error) {
 	q := db.New(pool)

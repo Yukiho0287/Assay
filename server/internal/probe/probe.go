@@ -82,6 +82,10 @@ type Info struct {
 	NeedsControl bool
 	NeedsPricing bool
 	CaseCount    int
+	// RequestsPerCase 每用例请求数（toolschema 非流式+流式=2），前端据此估算请求量。
+	RequestsPerCase int
+	// SupportsMaxCases 是否受「用例数上限」参数影响；固定请求矩阵的检测项为 false。
+	SupportsMaxCases bool
 }
 
 // Probe 一个检测项：元数据 + 槽位数预计算（创建任务时算 progress_total）+ 运行入口。

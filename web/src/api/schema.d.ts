@@ -598,8 +598,12 @@ export interface components {
             needsControl: boolean;
             /** @description 是否要求目标模型已定价 */
             needsPricing: boolean;
-            /** @description 全量用例数（每用例跑非流式+流式两种模式） */
+            /** @description 全量用例数 */
             caseCount: number;
+            /** @description 每用例请求数（如 toolschema 非流式+流式各一次 = 2），用于前端估算请求量 */
+            requestsPerCase: number;
+            /** @description 是否受任务参数「用例数上限」影响（固定请求矩阵的检测项为 false） */
+            supportsMaxCases: boolean;
         };
         /** @enum {string} */
         TaskStatus: "queued" | "running" | "succeeded" | "failed" | "canceled";

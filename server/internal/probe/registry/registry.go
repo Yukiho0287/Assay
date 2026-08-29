@@ -3,10 +3,12 @@ package registry
 
 import (
 	"github.com/Yukiho0287/assay/server/internal/probe"
+	"github.com/Yukiho0287/assay/server/internal/probe/tokenaccounting"
 	"github.com/Yukiho0287/assay/server/internal/probe/toolschema"
 )
 
 var all = []probe.Probe{
+	tokenaccounting.New(),
 	toolschema.New(),
 }
 

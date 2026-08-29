@@ -357,14 +357,16 @@ func probeInfoToAPI(info probe.Info) api.ProbeInfo {
 		protocols = append(protocols, api.Protocol(p))
 	}
 	return api.ProbeInfo{
-		Id:           info.ID,
-		Name:         info.Name,
-		Description:  info.Description,
-		CostTier:     api.CostTier(info.CostTier),
-		Protocols:    protocols,
-		NeedsControl: info.NeedsControl,
-		NeedsPricing: info.NeedsPricing,
-		CaseCount:    info.CaseCount,
+		Id:               info.ID,
+		Name:             info.Name,
+		Description:      info.Description,
+		CostTier:         api.CostTier(info.CostTier),
+		Protocols:        protocols,
+		NeedsControl:     info.NeedsControl,
+		NeedsPricing:     info.NeedsPricing,
+		CaseCount:        info.CaseCount,
+		RequestsPerCase:  info.RequestsPerCase,
+		SupportsMaxCases: info.SupportsMaxCases,
 	}
 }
 
