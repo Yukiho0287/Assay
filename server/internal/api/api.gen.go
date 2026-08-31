@@ -824,7 +824,7 @@ type StabilityTaskParams struct {
 	// RequestsPerStage 每档计入统计的请求数
 	RequestsPerStage *int `json:"requestsPerStage,omitempty"`
 
-	// WarmupPerStage 每档预热请求数（评估时剔除，不计入指标）
+	// WarmupPerStage 每档预热请求数（评估时剔除，不计入指标）；缺省 0（不预热）
 	WarmupPerStage *int `json:"warmupPerStage,omitempty"`
 }
 
