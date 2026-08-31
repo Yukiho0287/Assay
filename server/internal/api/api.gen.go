@@ -35,14 +35,17 @@ func (e CaseMode) Valid() bool {
 
 // Defines values for CaseStatus.
 const (
-	Passed   CaseStatus = "passed"
-	Rejected CaseStatus = "rejected"
-	Violated CaseStatus = "violated"
+	Collected CaseStatus = "collected"
+	Passed    CaseStatus = "passed"
+	Rejected  CaseStatus = "rejected"
+	Violated  CaseStatus = "violated"
 )
 
 // Valid indicates whether the value is a known member of the CaseStatus enum.
 func (e CaseStatus) Valid() bool {
 	switch e {
+	case Collected:
+		return true
 	case Passed:
 		return true
 	case Rejected:
@@ -159,7 +162,7 @@ func (e TaskStatus) Valid() bool {
 // CaseMode defines model for CaseMode.
 type CaseMode string
 
-// CaseStatus 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规
+// CaseStatus 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规；collected=已采集·待评估（跨行断言检测项运行中的中间态，只含原始计数不含结论，任务结束后必被终态覆盖）
 type CaseStatus string
 
 // ChangePasswordRequest defines model for ChangePasswordRequest.
@@ -392,7 +395,7 @@ type QualityCaseResult struct {
 	Probe           string   `json:"probe"`
 	SelectionReason string   `json:"selectionReason"`
 
-	// Status 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规
+	// Status 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规；collected=已采集·待评估（跨行断言检测项运行中的中间态，只含原始计数不含结论，任务结束后必被终态覆盖）
 	Status CaseStatus `json:"status"`
 
 	// Suite 语料套件名（如 TestEnforcerCases）
@@ -478,11 +481,13 @@ type RoleUpdate struct {
 
 // TaskStatBucket defines model for TaskStatBucket.
 type TaskStatBucket struct {
-	Name     string `json:"name"`
-	Passed   int    `json:"passed"`
-	Rejected int    `json:"rejected"`
-	Total    int    `json:"total"`
-	Violated int    `json:"violated"`
+	// Collected 已采集·待评估行数（仅运行中非零）
+	Collected int    `json:"collected"`
+	Name      string `json:"name"`
+	Passed    int    `json:"passed"`
+	Rejected  int    `json:"rejected"`
+	Total     int    `json:"total"`
+	Violated  int    `json:"violated"`
 }
 
 // TaskStats defines model for TaskStats.
@@ -491,10 +496,13 @@ type TaskStats struct {
 
 	// ByReason 按选例理由（selection_reason）分桶
 	ByReason []TaskStatBucket `json:"byReason"`
-	Passed   int              `json:"passed"`
-	Rejected int              `json:"rejected"`
-	Total    int              `json:"total"`
-	Violated int              `json:"violated"`
+
+	// Collected 已采集·待评估行数（仅运行中非零）
+	Collected int `json:"collected"`
+	Passed    int `json:"passed"`
+	Rejected  int `json:"rejected"`
+	Total     int `json:"total"`
+	Violated  int `json:"violated"`
 }
 
 // TaskStatus defines model for TaskStatus.

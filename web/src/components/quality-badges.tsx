@@ -27,6 +27,7 @@ const caseStyles: Record<CaseStatus, string> = {
   passed: 'bg-green-500/15 text-green-600 dark:text-green-400',
   rejected: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
   violated: 'bg-red-500/15 text-red-600 dark:text-red-400',
+  collected: 'bg-muted text-muted-foreground',
 }
 
 export function CaseStatusBadge({ status }: { status: CaseStatus }) {

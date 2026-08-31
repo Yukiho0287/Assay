@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Assay API
   description: LLM 渠道检测平台 API。本文件是前后端契约的唯一真相源（契约优先）。
-  version: 0.5.1
+  version: 0.6.0
 servers:
   - url: /api
 paths:
@@ -1157,9 +1157,9 @@ components:
       type: string
       enum: [queued, running, succeeded, failed, canceled]
     CaseStatus:
-      description: 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规
+      description: 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规；collected=已采集·待评估（跨行断言检测项运行中的中间态，只含原始计数不含结论，任务结束后必被终态覆盖）
       type: string
-      enum: [passed, rejected, violated]
+      enum: [passed, rejected, violated, collected]
     CaseMode:
       type: string
       enum: [non_stream, stream]
@@ -1232,7 +1232,7 @@ components:
           type: number
     TaskStatBucket:
       type: object
-      required: [name, total, passed, rejected, violated]
+      required: [name, total, passed, rejected, violated, collected]
       properties:
         name:
           type: string
@@ -1244,9 +1244,12 @@ components:
           type: integer
         violated:
           type: integer
+        collected:
+          description: 已采集·待评估行数（仅运行中非零）
+          type: integer
     TaskStats:
       type: object
-      required: [total, passed, rejected, violated, byMode, byReason]
+      required: [total, passed, rejected, violated, collected, byMode, byReason]
       properties:
         total:
           type: integer
@@ -1255,6 +1258,9 @@ components:
         rejected:
           type: integer
         violated:
+          type: integer
+        collected:
+          description: 已采集·待评估行数（仅运行中非零）
           type: integer
         byMode:
           type: array

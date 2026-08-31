@@ -456,6 +456,8 @@ func buildStats(rows []db.AggregateTaskCaseResultsRow) *api.TaskStats {
 			b.Rejected += n
 		case probe.StatusViolated:
 			b.Violated += n
+		case probe.StatusCollected:
+			b.Collected += n
 		}
 	}
 	for _, row := range rows {
@@ -468,6 +470,8 @@ func buildStats(rows []db.AggregateTaskCaseResultsRow) *api.TaskStats {
 			stats.Rejected += n
 		case probe.StatusViolated:
 			stats.Violated += n
+		case probe.StatusCollected:
+			stats.Collected += n
 		}
 		add(bucket(modes, row.BucketMode), row.Status, n)
 		add(bucket(reasons, row.BucketReason), row.Status, n)

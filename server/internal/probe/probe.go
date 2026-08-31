@@ -30,12 +30,15 @@ type Params struct {
 	MaxCases    int `json:"maxCases,omitempty"` // 用例数上限，0 = 全量
 }
 
-// 用例判定结果三态。故意偏离 KVV：其 infra_error（HTTP/传输错误）并入 rejected，
-// 因为对渠道检测而言"上游拒绝服务"本身就是被测行为，不是待剔除的基建噪声。
+// 用例判定结果三终态 + 一中间态。故意偏离 KVV：其 infra_error（HTTP/传输错误）
+// 并入 rejected，因为对渠道检测而言"上游拒绝服务"本身就是被测行为，不是待剔除的基建噪声。
 const (
 	StatusPassed   = "passed"   // 合规
 	StatusRejected = "rejected" // 请求被拒（任何 HTTP 非 2xx / 传输错误 / 超时）
 	StatusViolated = "violated" // HTTP 200 但响应不合规
+	// StatusCollected 已采集·待评估：跨行断言的检测项在阶段二前的中间态，
+	// 只展示原始计数不给结论（提前判 passed 可能被翻案），评估后必被终态覆盖
+	StatusCollected = "collected"
 )
 
 // 请求模式：同一用例分别以非流式与流式各测一次。

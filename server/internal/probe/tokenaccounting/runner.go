@@ -135,14 +135,16 @@ func run(ctx context.Context, in probe.RunInput) error {
 			if gctx.Err() != nil {
 				return gctx.Err()
 			}
-			// 请求层已定型的行（rejected / 提取层 violated）立即落库实时可见：
-			// 这些结论不依赖其余槽位、不会再变。通过采集的行必须等阶段二跨行
-			// 断言——提前标 passed 可能被边际率/确定性断言翻成 violated，出现
-			// "绿转红"的临时错误结论，违背证据链原则，故只早报已定型行。
+			// 每个槽位定型即落库实时可见：请求层已定型的行（rejected / 提取层
+			// violated）直接报终态；采集成功的行报 collected 中间态——跨行断言
+			// 未跑，提前标 passed 可能被边际率/确定性断言翻案出现"绿转红"，
+			// 故只展示原始计数不给结论，阶段二评估后幂等覆盖为终态。
+			res := collectedResult(s)
 			if s.status != "" {
-				if err := in.Report(gctx, finalizedResult(s)); err != nil {
-					return fmt.Errorf("结果落库失败: %w", err)
-				}
+				res = finalizedResult(s)
+			}
+			if err := in.Report(gctx, res); err != nil {
+				return fmt.Errorf("结果落库失败: %w", err)
 			}
 			// 进度回调必须在锁内：保证 done 的落库按递增序发生，
 			// 否则并发完成时旧值可能后写，任务终态进度停在中间值
@@ -375,6 +377,16 @@ func finalizedResult(s *slotFetch) probe.CaseResult {
 	res := baseResult(s)
 	res.Status = s.status
 	res.Message = truncateMessage(s.message)
+	return res
+}
+
+// collectedResult 已采集·待评估行：只带原始计数与 usage 原文，结论留给阶段二。
+func collectedResult(s *slotFetch) probe.CaseResult {
+	res := baseResult(s)
+	res.Status = probe.StatusCollected
+	res.Arguments = truncateRunes(s.usage.Raw, 1000)
+	res.Message = truncateMessage(fmt.Sprintf("pt=%d ct=%d total=%d chars=%d; 待全量断言",
+		s.usage.Prompt, s.usage.Completion, s.usage.Total, s.def.chars))
 	return res
 }
 

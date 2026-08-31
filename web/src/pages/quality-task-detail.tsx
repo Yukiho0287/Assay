@@ -63,6 +63,9 @@ export default function QualityTaskDetailPage() {
     queryKey: ['quality-task', taskId],
     queryFn: () => qualityApi.getTask(taskId),
     retry: false,
+    // 运行中 3s 轮询刷新统计卡（含待评估计数）；终结后靠 SSE 终态帧失效重拉
+    refetchInterval: (q) =>
+      q.state.data != null && !isTerminalStatus(q.state.data.status) ? 3000 : false,
   })
   const probes = useQuery({ queryKey: ['probes'], queryFn: probesApi.list })
 
@@ -276,19 +279,24 @@ function SnapshotCard({
 
 function StatsCard({ stats }: { stats: NonNullable<QualityTask['stats']> }) {
   const { t } = useI18n()
+  // 运行中才会出现待评估行，任务结束后该卡片与分桶列自动消失
+  const showCollected = stats.collected > 0
   const top: [string, number, string][] = [
     [t('quality.total'), stats.total, ''],
     [t('case.passed'), stats.passed, 'text-green-600 dark:text-green-400'],
     [t('case.rejected'), stats.rejected, 'text-amber-600 dark:text-amber-400'],
     [t('case.violated'), stats.violated, 'text-red-600 dark:text-red-400'],
   ]
+  if (showCollected) {
+    top.push([t('case.collected'), stats.collected, 'text-muted-foreground'])
+  }
   return (
     <Card>
       <CardHeader>
         <CardTitle>{t('quality.statsTitle')}</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-6">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className={`grid grid-cols-2 gap-4 ${showCollected ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
           {top.map(([label, value, cls]) => (
             <div key={label} className="rounded-lg border p-4">
               <p className="text-sm text-muted-foreground">{label}</p>
@@ -297,8 +305,8 @@ function StatsCard({ stats }: { stats: NonNullable<QualityTask['stats']> }) {
           ))}
         </div>
         <div className="grid gap-6 lg:grid-cols-2">
-          <BucketTable title={t('quality.byMode')} buckets={stats.byMode} translateName />
-          <BucketTable title={t('quality.byReason')} buckets={stats.byReason} />
+          <BucketTable title={t('quality.byMode')} buckets={stats.byMode} translateName showCollected={showCollected} />
+          <BucketTable title={t('quality.byReason')} buckets={stats.byReason} showCollected={showCollected} />
         </div>
       </CardContent>
     </Card>
@@ -309,10 +317,12 @@ function BucketTable({
   title,
   buckets,
   translateName = false,
+  showCollected = false,
 }: {
   title: string
   buckets: TaskStatBucket[]
   translateName?: boolean
+  showCollected?: boolean
 }) {
   const { t } = useI18n()
   return (
@@ -326,6 +336,7 @@ function BucketTable({
             <TableHead className="text-right">{t('case.passed')}</TableHead>
             <TableHead className="text-right">{t('case.rejected')}</TableHead>
             <TableHead className="text-right">{t('case.violated')}</TableHead>
+            {showCollected && <TableHead className="text-right">{t('case.collected')}</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -338,6 +349,7 @@ function BucketTable({
               <TableCell className="text-right tabular-nums">{b.passed}</TableCell>
               <TableCell className="text-right tabular-nums">{b.rejected}</TableCell>
               <TableCell className="text-right tabular-nums">{b.violated}</TableCell>
+              {showCollected && <TableCell className="text-right tabular-nums">{b.collected}</TableCell>}
             </TableRow>
           ))}
         </TableBody>
@@ -380,6 +392,7 @@ function ResultsCard({
               <SelectItem value="passed">{t('case.passed')}</SelectItem>
               <SelectItem value="rejected">{t('case.rejected')}</SelectItem>
               <SelectItem value="violated">{t('case.violated')}</SelectItem>
+              <SelectItem value="collected">{t('case.collected')}</SelectItem>
             </SelectContent>
           </Select>
         </div>

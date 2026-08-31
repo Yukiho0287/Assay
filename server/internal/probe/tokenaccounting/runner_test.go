@@ -1,6 +1,7 @@
 package tokenaccounting
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -378,6 +379,90 @@ func TestEarlyReportFinalizedRows(t *testing.T) {
 		t.Fatalf("终态行数 = %d, want 9", len(reported))
 	}
 	wantStatus(t, reported, key(suiteMarginal, 4, probe.ModeNonStream), probe.StatusRejected)
+}
+
+// 增量落库：采集成功的行以 collected 中间态实时上报（只带原始计数、不给结论），
+// 阶段二评估后被终态幂等覆盖。marginal/4 阻塞、其余 8 个请求正常返回 →
+// 放行前 Report 应已收到恰好 8 条 collected；放行跑完后 9 行全部翻成 passed。
+func TestEarlyReportCollectedRows(t *testing.T) {
+	release := make(chan struct{})
+	f := &fakeVendor{seen: map[int]int{}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.Unmarshal(data, &body)
+		if len(body.Messages) == 1 && len(body.Messages[0].Content) == 4*step {
+			<-release // marginal/4 卡住，模拟慢渠道
+		}
+		r.Body = io.NopCloser(bytes.NewReader(data)) // 包装层读掉了 body，回填给 fakeVendor
+		f.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	var mu sync.Mutex
+	reported := map[string]probe.CaseResult{}
+	in := probe.RunInput{
+		Target: probe.Target{BaseURL: srv.URL, Model: "test-model", Protocols: []string{"openai_chat"}},
+		APIKey: "test-key",
+		Params: probe.Params{Concurrency: 4},
+		Client: srv.Client(),
+		Report: func(_ context.Context, r probe.CaseResult) error {
+			mu.Lock()
+			defer mu.Unlock()
+			reported[key(r.Suite, r.Line, r.Mode)] = r
+			return nil
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- New().Run(context.Background(), in) }()
+
+	// 轮询等 8 条中间态到位（阻塞行未放行，评估阶段必然未开始）
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		n := len(reported)
+		mu.Unlock()
+		if n == 8 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("放行前中间态行数 = %d, want 8", n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	if _, ok := reported[key(suiteMarginal, 4, probe.ModeNonStream)]; ok {
+		t.Fatal("阻塞中的 marginal/4 不应已上报")
+	}
+	for k, r := range reported {
+		if r.Status != probe.StatusCollected {
+			t.Fatalf("中间态行 %s status = %s, want collected", k, r.Status)
+		}
+		if !strings.Contains(r.Message, "pt=") || !strings.Contains(r.Message, "待全量断言") {
+			t.Fatalf("%s 中间态 message 应带原始计数且注明待评估: %s", k, r.Message)
+		}
+		if !strings.Contains(r.Arguments, "prompt_tokens") {
+			t.Fatalf("%s 中间态 arguments 应存 usage 原文: %s", k, r.Arguments)
+		}
+	}
+	mu.Unlock()
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(reported) != 9 {
+		t.Fatalf("终态行数 = %d, want 9", len(reported))
+	}
+	for k := range reported {
+		wantStatus(t, reported, k, probe.StatusPassed) // collected 必须被终态覆盖，不残留
+	}
 }
 
 // violated 不重试：请求层即定型的 violated（流式缺 usage）在 Reruns=2 下 attempts 仍为 1。

@@ -608,10 +608,10 @@ export interface components {
         /** @enum {string} */
         TaskStatus: "queued" | "running" | "succeeded" | "failed" | "canceled";
         /**
-         * @description 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规
+         * @description 用例判定：rejected=请求被上游拒绝（HTTP/传输错误）；violated=响应到手但不合规；passed=合规；collected=已采集·待评估（跨行断言检测项运行中的中间态，只含原始计数不含结论，任务结束后必被终态覆盖）
          * @enum {string}
          */
-        CaseStatus: "passed" | "rejected" | "violated";
+        CaseStatus: "passed" | "rejected" | "violated" | "collected";
         /** @enum {string} */
         CaseMode: "non_stream" | "stream";
         QualityTaskParams: {
@@ -661,12 +661,16 @@ export interface components {
             passed: number;
             rejected: number;
             violated: number;
+            /** @description 已采集·待评估行数（仅运行中非零） */
+            collected: number;
         };
         TaskStats: {
             total: number;
             passed: number;
             rejected: number;
             violated: number;
+            /** @description 已采集·待评估行数（仅运行中非零） */
+            collected: number;
             byMode: components["schemas"]["TaskStatBucket"][];
             /** @description 按选例理由（selection_reason）分桶 */
             byReason: components["schemas"]["TaskStatBucket"][];
