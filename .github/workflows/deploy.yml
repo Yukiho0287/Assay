@@ -48,7 +48,9 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           sum=$(cut -d' ' -f1 "assay-$TAG-image.tar.gz.sha256")
+          # Ubuntu 客户端默认开 GSSAPI，会先做 Kerberos 认证等 DNS 超时（实测每次卡 17-21s）才回落公钥；显式关闭
           ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" -o IdentitiesOnly=yes \
+            -o GSSAPIAuthentication=no -o PreferredAuthentications=publickey \
             "root@$DEPLOY_HOST" "deploy $TAG $sum" \
             < "assay-$TAG-image.tar.gz"
