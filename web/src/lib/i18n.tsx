@@ -85,7 +85,8 @@ const zh = {
 
   'quality.desc': '勾选检测项对渠道发起质量检测，实时跟踪进度并查看可审计的用例级报告。',
   'quality.launch': '发起检测',
-  'quality.launchDesc': '选择检测对象（渠道 × 模型条目）与检测项；任务创建时定格参数快照，历史报告不受渠道后续变更影响。',
+  'quality.targetDesc': '选择渠道与模型条目；任务创建时定格参数快照，历史报告不受渠道后续变更影响。',
+  'quality.probesDesc': '勾选即组合，检测项按成本从低到高排列。',
   'quality.channel': '渠道',
   'quality.model': '模型条目',
   'quality.selectChannel': '选择渠道',
@@ -312,8 +313,9 @@ const en: Record<DictKey, string> = {
   'quality.desc':
     'Pick probes and run quality tests against a channel, with live progress and auditable per-case reports.',
   'quality.launch': 'Launch test',
-  'quality.launchDesc':
-    'Pick a target (channel × model entry) and probes; parameters are snapshotted at creation, so reports are immune to later channel edits.',
+  'quality.targetDesc':
+    'Pick a channel and model entry; parameters are snapshotted at creation, so reports are immune to later channel edits.',
+  'quality.probesDesc': 'Check to compose; probes are ordered from cheapest to priciest.',
   'quality.channel': 'Channel',
   'quality.model': 'Model entry',
   'quality.selectChannel': 'Select a channel',

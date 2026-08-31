@@ -120,10 +120,10 @@ export default function QualityPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{t('quality.launch')}</CardTitle>
-          <CardDescription>{t('quality.launchDesc')}</CardDescription>
+          <CardTitle>{t('quality.target')}</CardTitle>
+          <CardDescription>{t('quality.targetDesc')}</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4">
+        <CardContent>
           <div className="flex flex-wrap items-end gap-3">
             <div className="grid gap-2">
               <Label>{t('quality.channel')}</Label>
@@ -173,50 +173,55 @@ export default function QualityPage() {
               <p className="text-sm text-muted-foreground">{t('quality.noModels')}</p>
             )}
           </div>
+        </CardContent>
+      </Card>
 
-          <div className="grid gap-2">
-            <Label>{t('quality.probes')}</Label>
-            {probes.isPending ? (
-              <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
-            ) : (
-              <div className="grid gap-2">
-                {(probes.data ?? []).map((p) => (
-                  <label
-                    key={p.id}
-                    className="flex cursor-pointer items-start gap-3 rounded-md border p-3"
-                  >
-                    <Checkbox
-                      checked={checked.includes(p.id)}
-                      onCheckedChange={() => toggleProbe(p.id)}
-                      className="mt-0.5"
-                    />
-                    <div className="grid gap-1">
-                      <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                        {p.name}
-                        <CostTierBadge tier={p.costTier} />
-                        <span className="text-xs font-normal text-muted-foreground">
-                          {p.caseCount} {t('quality.cases')}
-                          {p.requestsPerCase > 1 &&
-                            ` · ${p.caseCount * p.requestsPerCase} ${t('quality.requests')}`}
-                        </span>
-                        {p.needsPricing && (
-                          <span className="text-xs font-normal text-muted-foreground">
-                            · {t('quality.needsPricing')}
-                          </span>
-                        )}
-                        {p.needsControl && (
-                          <span className="text-xs font-normal text-muted-foreground">
-                            · {t('quality.needsControl')}
-                          </span>
-                        )}
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('quality.probes')}</CardTitle>
+          <CardDescription>{t('quality.probesDesc')}</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          {probes.isPending ? (
+            <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
+          ) : (
+            <div className="grid gap-2">
+              {(probes.data ?? []).map((p) => (
+                <label
+                  key={p.id}
+                  className="flex cursor-pointer items-start gap-3 rounded-md border p-3"
+                >
+                  <Checkbox
+                    checked={checked.includes(p.id)}
+                    onCheckedChange={() => toggleProbe(p.id)}
+                    className="mt-0.5"
+                  />
+                  <div className="grid gap-1">
+                    <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                      {p.name}
+                      <CostTierBadge tier={p.costTier} />
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {p.caseCount} {t('quality.cases')}
+                        {p.requestsPerCase > 1 &&
+                          ` · ${p.caseCount * p.requestsPerCase} ${t('quality.requests')}`}
                       </span>
-                      <span className="text-xs text-muted-foreground">{p.description}</span>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
+                      {p.needsPricing && (
+                        <span className="text-xs font-normal text-muted-foreground">
+                          · {t('quality.needsPricing')}
+                        </span>
+                      )}
+                      {p.needsControl && (
+                        <span className="text-xs font-normal text-muted-foreground">
+                          · {t('quality.needsControl')}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{p.description}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
 
           <div className="grid gap-3">
             <button
