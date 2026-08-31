@@ -230,7 +230,7 @@ const zh = {
   'update.upToDate': '已是最新版本',
   'update.available': '发现新版本',
   'update.deploy': '立即更新',
-  'update.deploying': '已触发部署，等待新版本上线（无迁移时零停机，约 1-2 分钟）…',
+  'update.deploying': '已触发部署，等待新版本上线（无迁移时零停机，约半分钟）…',
   'update.done': '更新完成，页面即将刷新',
   'update.timeout': '等待超时：部署可能仍在进行，请稍后重新打开本窗口确认版本',
   'update.noToken': '服务器未配置 ASSAY_GITHUB_TOKEN，无法在线检查与更新。请在服务器 /opt/assay/env 中配置后重启服务。',
@@ -485,7 +485,7 @@ const en: Record<DictKey, string> = {
   'update.upToDate': 'Already up to date',
   'update.available': 'New version available',
   'update.deploy': 'Update now',
-  'update.deploying': 'Deployment triggered; waiting for the new version (zero downtime without migrations, ~1-2 min)…',
+  'update.deploying': 'Deployment triggered; waiting for the new version (zero downtime without migrations, ~30s)…',
   'update.done': 'Update complete; reloading…',
   'update.timeout': 'Timed out: the deployment may still be running. Reopen this dialog later to verify.',
   'update.noToken':

@@ -14,8 +14,8 @@ import { useI18n } from '@/lib/i18n'
 
 type DeployPhase = 'idle' | 'deploying' | 'done' | 'timeout'
 
-// 触发部署后轮询 /api/version 的间隔与上限（蓝绿切换通常 1-2 分钟内完成）
-const POLL_INTERVAL_MS = 5_000
+// 触发部署后轮询 /api/version 的间隔与上限（无迁移时蓝绿切换实测约 15s 上线；有迁移会更久，上限放宽）
+const POLL_INTERVAL_MS = 3_000
 const POLL_TIMEOUT_MS = 6 * 60_000
 
 interface UpdateDialogProps {
