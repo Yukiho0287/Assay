@@ -174,11 +174,16 @@ select t.id, t.kind, t.status, t.channel_id, t.target, t.probes, t.params,
 from tasks t
 left join users u on u.id = t.created_by
 where t.kind = $1
+  and (sqlc.narg('status')::text is null or t.status = sqlc.narg('status')::text)
+  and (sqlc.narg('channel_id')::uuid is null or t.channel_id = sqlc.narg('channel_id')::uuid)
 order by t.created_at desc
 limit $2 offset $3;
 
 -- name: CountTasks :one
-select count(*) from tasks where kind = $1;
+select count(*) from tasks
+where kind = $1
+  and (sqlc.narg('status')::text is null or status = sqlc.narg('status')::text)
+  and (sqlc.narg('channel_id')::uuid is null or channel_id = sqlc.narg('channel_id')::uuid);
 
 -- name: MarkTaskRunning :execrows
 -- 状态守卫：只允许 queued→running（River 重试进来时若已是终态则不重置）

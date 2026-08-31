@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, Loader2, Play, X } from 'lucide-react'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ChevronDown, ChevronLeft, ChevronRight, Loader2, Play, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { errText } from '@/components/channel-form-dialog'
-import { TaskStatusBadge, CostTierBadge } from '@/components/quality-badges'
+import { TaskStatusBadge } from '@/components/quality-badges'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -32,8 +32,12 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { isTerminalStatus } from '@/hooks/use-task-events'
-import { channelsApi, probesApi, qualityApi, type QualityTask } from '@/lib/api'
+import { channelsApi, probesApi, qualityApi, type QualityTask, type TaskStatus } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+
+const PAGE_SIZE = 20
+
+const TASK_STATUSES: TaskStatus[] = ['queued', 'running', 'succeeded', 'failed', 'canceled']
 
 export default function QualityPage() {
   const { t } = useI18n()
@@ -48,6 +52,10 @@ export default function QualityPage() {
   const [concurrency, setConcurrency] = useState('4')
   const [reruns, setReruns] = useState('2')
   const [maxCases, setMaxCases] = useState('')
+  // 历史表筛选与分页：'all' = 不过滤；筛选变化时归回第 1 页
+  const [filterStatus, setFilterStatus] = useState('all')
+  const [filterChannel, setFilterChannel] = useState('all')
+  const [page, setPage] = useState(1)
 
   const channels = useQuery({ queryKey: ['channels'], queryFn: channelsApi.list })
   const probes = useQuery({ queryKey: ['probes'], queryFn: probesApi.list })
@@ -56,13 +64,22 @@ export default function QualityPage() {
     queryFn: () => channelsApi.get(channelId),
     enabled: channelId !== '',
   })
-  // 有未终结任务时轮询列表；进度实时性靠详情页 SSE，列表 3s 粗粒度足够
+  // 有未终结任务时轮询列表；进度实时性靠详情页 SSE，列表 3s 粗粒度足够。
+  // placeholderData 让翻页/切筛选时保留旧数据，不闪加载态。
   const tasks = useQuery({
-    queryKey: ['quality-tasks'],
-    queryFn: () => qualityApi.listTasks(),
+    queryKey: ['quality-tasks', filterStatus, filterChannel, page],
+    queryFn: () =>
+      qualityApi.listTasks({
+        limit: PAGE_SIZE,
+        offset: (page - 1) * PAGE_SIZE,
+        status: filterStatus === 'all' ? undefined : (filterStatus as TaskStatus),
+        channelId: filterChannel === 'all' ? undefined : filterChannel,
+      }),
+    placeholderData: keepPreviousData,
     refetchInterval: (q) =>
       q.state.data?.items.some((task) => !isTerminalStatus(task.status)) ? 3000 : false,
   })
+  const totalPages = Math.max(1, Math.ceil((tasks.data?.total ?? 0) / PAGE_SIZE))
 
   const create = useMutation({
     mutationFn: qualityApi.createTask,
@@ -199,7 +216,6 @@ export default function QualityPage() {
                   <div className="grid gap-1">
                     <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
                       {p.name}
-                      <CostTierBadge tier={p.costTier} />
                       <span className="text-xs font-normal text-muted-foreground">
                         {p.caseCount} {t('quality.cases')}
                         {p.requestsPerCase > 1 &&
@@ -298,7 +314,48 @@ export default function QualityPage() {
         <CardHeader>
           <CardTitle>{t('quality.history')}</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Select
+              value={filterStatus}
+              onValueChange={(v) => {
+                setFilterStatus(v)
+                setPage(1)
+              }}
+            >
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('quality.filterAllStatuses')}</SelectItem>
+                {TASK_STATUSES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {t(`taskStatus.${s}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* 渠道筛选列表不过滤停用渠道：历史任务可能属于已停用渠道 */}
+            <Select
+              value={filterChannel}
+              onValueChange={(v) => {
+                setFilterChannel(v)
+                setPage(1)
+              }}
+            >
+              <SelectTrigger className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('quality.filterAllChannels')}</SelectItem>
+                {(channels.data ?? []).map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           {tasks.isPending ? (
             <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
           ) : tasks.isError ? (
@@ -332,6 +389,35 @@ export default function QualityPage() {
                 ))}
               </TableBody>
             </Table>
+          )}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-7"
+                title={t('quality.prevPage')}
+                disabled={page <= 1}
+                onClick={() => setPage(page - 1)}
+              >
+                <ChevronLeft />
+              </Button>
+              <span className="text-sm tabular-nums text-muted-foreground">
+                {t('quality.pagePrefix')}
+                {page} / {totalPages}
+                {t('quality.pageSuffix')}
+              </span>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-7"
+                title={t('quality.nextPage')}
+                disabled={page >= totalPages}
+                onClick={() => setPage(page + 1)}
+              >
+                <ChevronRight />
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

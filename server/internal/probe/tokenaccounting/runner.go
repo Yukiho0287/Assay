@@ -69,7 +69,6 @@ func New() probe.Probe {
 			ID:               probeID,
 			Name:             "Token 计量检定",
 			Description:      "向渠道发送确定性纯 ASCII 样本（4 档长度 + 同文三连发 + 流式/非流式对照，共 9 个 max_tokens=4 的最小请求），检定渠道 token 计量（usage）是否数学自洽：total=prompt+completion 恒等式、纯 ASCII token 上限、同字节同计数、恒定边际率与漂移。只测自洽不比官方，无需对照渠道。",
-			CostTier:         "cheap",
 			Protocols:        []string{"openai_chat"},
 			CaseCount:        len(defs),
 			RequestsPerCase:  1,
@@ -97,6 +96,8 @@ type slotFetch struct {
 	httpStatus int
 	latencyMs  int
 	usage      usageData
+	// retryHeader 本次尝试响应的头（仅非 2xx 时留存），供重试时解析 Retry-After
+	retryHeader http.Header
 }
 
 // run 两阶段执行：阶段一并发采集 9 个请求的 usage（进度实时跳），
@@ -136,6 +137,21 @@ func run(ctx context.Context, in probe.RunInput) error {
 				fetchOne(gctx, in, client, s)
 				if s.status != probe.StatusRejected || s.attempts > in.Params.Reruns {
 					break
+				}
+				// 失败且将重试：先把在途行报出去（rejected + 重试说明，同槽位后续
+				// 写入幂等覆盖），用户在退避窗口里能看到发生了什么，而不是空等。
+				delay := probe.RetryDelay(s.attempts, s.retryHeader)
+				if gctx.Err() == nil {
+					res := baseResult(s)
+					res.Status = probe.StatusRejected
+					res.Message = probe.TruncateMessage(fmt.Sprintf("%s；第 %d/%d 次尝试失败，%s 后重试",
+						s.message, s.attempts, in.Params.Reruns+1, probe.FmtDelay(delay)))
+					if err := in.Report(gctx, res); err != nil {
+						return fmt.Errorf("结果落库失败: %w", err)
+					}
+				}
+				if err := probe.SleepUntil(gctx, time.Now().Add(delay)); err != nil {
+					return err
 				}
 			}
 			// 中止时不再上报进度（与 toolschema 同理：取消不是渠道行为）
@@ -180,6 +196,7 @@ func run(ctx context.Context, in probe.RunInput) error {
 func fetchOne(ctx context.Context, in probe.RunInput, client *http.Client, s *slotFetch) {
 	s.status, s.message, s.httpStatus, s.latencyMs = "", "", 0, 0
 	s.usage = usageData{}
+	s.retryHeader = nil
 	rejected := func(msg string) {
 		s.status = probe.StatusRejected
 		s.message = msg
@@ -220,6 +237,7 @@ func fetchOne(ctx context.Context, in probe.RunInput, client *http.Client, s *sl
 	defer resp.Body.Close()
 	s.httpStatus = resp.StatusCode
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		s.retryHeader = resp.Header // 留存供重试解析 Retry-After（尊重上游节流）
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		s.latencyMs = int(time.Since(start).Milliseconds())
 		msg := strings.TrimSpace(string(snippet))
@@ -271,7 +289,7 @@ func evaluate(fetched []*slotFetch) []probe.CaseResult {
 		res := baseResult(s)
 
 		u := s.usage
-		res.Arguments = truncateRunes(u.Raw, 1000)
+		res.Arguments = probe.TruncateRunes(u.Raw, 1000)
 		var viols, notes []string
 		notes = append(notes, fmt.Sprintf("pt=%d ct=%d total=%d chars=%d", u.Prompt, u.Completion, u.Total, s.def.chars))
 		if u.Cached >= 0 {
@@ -355,10 +373,10 @@ func evaluate(fetched []*slotFetch) []probe.CaseResult {
 
 		if len(viols) > 0 {
 			res.Status = probe.StatusViolated
-			res.Message = truncateMessage(strings.Join(append(viols, notes...), "; "))
+			res.Message = probe.TruncateMessage(strings.Join(append(viols, notes...), "; "))
 		} else {
 			res.Status = probe.StatusPassed
-			res.Message = truncateMessage(strings.Join(notes, "; "))
+			res.Message = probe.TruncateMessage(strings.Join(notes, "; "))
 		}
 		results = append(results, res)
 	}
@@ -383,7 +401,7 @@ func baseResult(s *slotFetch) probe.CaseResult {
 func finalizedResult(s *slotFetch) probe.CaseResult {
 	res := baseResult(s)
 	res.Status = s.status
-	res.Message = truncateMessage(s.message)
+	res.Message = probe.TruncateMessage(s.message)
 	return res
 }
 
@@ -391,8 +409,8 @@ func finalizedResult(s *slotFetch) probe.CaseResult {
 func collectedResult(s *slotFetch) probe.CaseResult {
 	res := baseResult(s)
 	res.Status = probe.StatusCollected
-	res.Arguments = truncateRunes(s.usage.Raw, 1000)
-	res.Message = truncateMessage(fmt.Sprintf("pt=%d ct=%d total=%d chars=%d; 待全量断言",
+	res.Arguments = probe.TruncateRunes(s.usage.Raw, 1000)
+	res.Message = probe.TruncateMessage(fmt.Sprintf("pt=%d ct=%d total=%d chars=%d; 待全量断言",
 		s.usage.Prompt, s.usage.Completion, s.usage.Total, s.def.chars))
 	return res
 }
@@ -411,17 +429,4 @@ func marginalRates(fetched []*slotFetch) []float64 {
 		prev = s
 	}
 	return rates
-}
-
-// truncateMessage 与 toolschema 同口径：换行压成 \n 字面量，超 500 字符截断。
-func truncateMessage(s string) string {
-	return truncateRunes(strings.ReplaceAll(s, "\n", "\\n"), 500)
-}
-
-func truncateRunes(s string, limit int) string {
-	r := []rune(s)
-	if len(r) <= limit {
-		return s
-	}
-	return string(r[:limit-3]) + "..."
 }

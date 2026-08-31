@@ -194,12 +194,26 @@ func (h *handlers) ListQualityTasks(w http.ResponseWriter, r *http.Request, para
 	if params.Offset != nil && *params.Offset > 0 {
 		offset = *params.Offset
 	}
-	rows, err := h.q.ListTasks(r.Context(), db.ListTasksParams{Kind: taskKindQuality, Limit: int32(limit), Offset: int32(offset)})
+	// 筛选条件：nil = 不过滤；列表与总数必须用同一组条件，否则页码算错
+	var status *string
+	if params.Status != nil {
+		status = (*string)(params.Status)
+	}
+	var channelID pgtype.UUID
+	if params.ChannelId != nil {
+		channelID = pgtype.UUID{Bytes: *params.ChannelId, Valid: true}
+	}
+	rows, err := h.q.ListTasks(r.Context(), db.ListTasksParams{
+		Kind: taskKindQuality, Limit: int32(limit), Offset: int32(offset),
+		Status: status, ChannelID: channelID,
+	})
 	if err != nil {
 		h.internalError(w, "读取任务列表失败", err)
 		return
 	}
-	total, err := h.q.CountTasks(r.Context(), taskKindQuality)
+	total, err := h.q.CountTasks(r.Context(), db.CountTasksParams{
+		Kind: taskKindQuality, Status: status, ChannelID: channelID,
+	})
 	if err != nil {
 		h.internalError(w, "统计任务数失败", err)
 		return
@@ -366,7 +380,6 @@ func probeInfoToAPI(info probe.Info) api.ProbeInfo {
 		Id:               info.ID,
 		Name:             info.Name,
 		Description:      info.Description,
-		CostTier:         api.CostTier(info.CostTier),
 		Protocols:        protocols,
 		NeedsControl:     info.NeedsControl,
 		NeedsPricing:     info.NeedsPricing,

@@ -41,7 +41,7 @@ func parseUsage(v any) (usageData, string) {
 	} {
 		n, ok := intField(m, f.name)
 		if !ok {
-			return u, "usage." + f.name + " 缺失或不是整数; usage=" + truncateRunes(u.Raw, 200)
+			return u, "usage." + f.name + " 缺失或不是整数; usage=" + probe.TruncateRunes(u.Raw, 200)
 		}
 		*f.dst = n
 	}

@@ -325,7 +325,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 质量检测任务历史（需 quality 权限；按创建时间倒序） */
+        /** 质量检测任务历史（需 quality 权限；按创建时间倒序，可按状态/渠道筛选） */
         get: operations["listQualityTasks"];
         put?: never;
         /** 创建质量检测任务（需 quality 权限；创建时快照检测对象参数，入队后由 worker 执行） */
@@ -614,18 +614,12 @@ export interface components {
             /** @description 失败摘要（超时/连接错误/上游错误体截断） */
             error?: string;
         };
-        /**
-         * @description 烧钱等级（便宜的挡在贵的前面）
-         * @enum {string}
-         */
-        CostTier: "cheap" | "medium" | "expensive";
         ProbeInfo: {
             /** @description 检测项唯一标识（如 tool_call_json_schema） */
             id: string;
             /** @description 中文显示名 */
             name: string;
             description: string;
-            costTier: components["schemas"]["CostTier"];
             /** @description 适用协议（渠道须至少声明其中之一） */
             protocols: components["schemas"]["Protocol"][];
             /** @description 是否需要对照渠道 */
@@ -1609,6 +1603,10 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                /** @description 按任务状态筛选；缺省不过滤 */
+                status?: components["schemas"]["TaskStatus"];
+                /** @description 按渠道筛选；缺省不过滤（渠道删除后其任务 channel_id 置空，仅在不过滤时可见） */
+                channelId?: string;
             };
             header?: never;
             path?: never;

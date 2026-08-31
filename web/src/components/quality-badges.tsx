@@ -1,6 +1,6 @@
 import { Loader2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import type { CaseStatus, CostTier, TaskStatus } from '@/lib/api'
+import type { CaseStatus, TaskStatus } from '@/lib/api'
 import { type DictKey, useI18n } from '@/lib/i18n'
 
 // 任务/用例状态徽章：五态与三判定的配色统一，列表页与详情页共用
@@ -37,9 +37,4 @@ export function CaseStatusBadge({ status }: { status: CaseStatus }) {
       {t(`case.${status}` as DictKey)}
     </Badge>
   )
-}
-
-export function CostTierBadge({ tier }: { tier: CostTier }) {
-  const { t } = useI18n()
-  return <Badge variant="outline">{t(`tier.${tier}` as DictKey)}</Badge>
 }

@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ChevronDown, FileCode, FileJson, Loader2, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, FileCode, FileJson, Loader2, RotateCcw, X } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router'
 import { errText } from '@/components/channel-form-dialog'
 import { CaseStatusBadge, TaskStatusBadge } from '@/components/quality-badges'
@@ -109,6 +109,15 @@ export default function QualityTaskDetailPage() {
     setCancelOpen(false)
     cancel.reset()
   }
+  // 重跑 = 用快照里的对象与参数重新走一遍创建流程：快照全新生成，
+  // 渠道/模型已删或未定价等由服务端创建校验链拦截并透出文案
+  const rerun = useMutation({
+    mutationFn: qualityApi.createTask,
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ['quality-tasks'] })
+      navigate(`/quality/${created.id}`)
+    },
+  })
 
   if (taskQ.isPending) {
     return <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
@@ -127,6 +136,7 @@ export default function QualityTaskDetailPage() {
 
   const probeName = (id: string) => probes.data?.find((p) => p.id === id)?.name ?? id
   const pct = total > 0 ? (done / total) * 100 : 0
+  const canRerun = task.target.channelId != null && task.target.modelEntryId != null
 
   return (
     <div className="grid gap-6">
@@ -148,7 +158,33 @@ export default function QualityTaskDetailPage() {
             {t('quality.cancelTask')}
           </Button>
         )}
+        {terminal && (
+          // 老数据快照可能缺 channelId/modelEntryId，此时禁用；Button 禁用态 pointer-events-none，
+          // 提示挂在外层 span 上才能显示
+          <span
+            className="ml-auto"
+            title={canRerun ? undefined : t('quality.rerunUnavailable')}
+          >
+            <Button
+              variant="outline"
+              disabled={!canRerun || rerun.isPending}
+              onClick={() =>
+                rerun.mutate({
+                  // canRerun 已保证两 id 非空；第二批三协议上线后此处透传 target.protocol
+                  channelId: task.target.channelId!,
+                  modelEntryId: task.target.modelEntryId!,
+                  probes: task.probes,
+                  params: task.params,
+                })
+              }
+            >
+              {rerun.isPending ? <Loader2 className="animate-spin" /> : <RotateCcw />}
+              {t('quality.rerun')}
+            </Button>
+          </span>
+        )}
       </div>
+      {rerun.isError && <p className="text-sm text-destructive">{errText(rerun.error)}</p>}
 
       {status != null && !isTerminalStatus(status) && (
         <div className="flex items-center gap-3">

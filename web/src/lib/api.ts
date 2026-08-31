@@ -29,7 +29,6 @@ export type QualityCaseResult = components['schemas']['QualityCaseResult']
 export type TaskStatus = components['schemas']['TaskStatus']
 export type CaseStatus = components['schemas']['CaseStatus']
 export type CaseMode = components['schemas']['CaseMode']
-export type CostTier = components['schemas']['CostTier']
 export type TaskStatBucket = components['schemas']['TaskStatBucket']
 export type TaskProgressEvent = components['schemas']['TaskProgressEvent']
 export type QualityReport = components['schemas']['QualityReport']
@@ -132,8 +131,14 @@ export const probesApi = {
 export const qualityApi = {
   createTask: (body: QualityTaskCreate) =>
     request<QualityTask>('/api/quality/tasks', { method: 'POST', body: JSON.stringify(body) }),
-  listTasks: (limit = 50, offset = 0) =>
-    request<QualityTaskList>(`/api/quality/tasks?limit=${limit}&offset=${offset}`),
+  listTasks: (opts?: { limit?: number; offset?: number; status?: TaskStatus; channelId?: string }) => {
+    const q = new URLSearchParams()
+    q.set('limit', String(opts?.limit ?? 50))
+    q.set('offset', String(opts?.offset ?? 0))
+    if (opts?.status) q.set('status', opts.status)
+    if (opts?.channelId) q.set('channelId', opts.channelId)
+    return request<QualityTaskList>(`/api/quality/tasks?${q}`)
+  },
   getTask: (id: string) => request<QualityTask>(`/api/quality/tasks/${id}`),
   cancelTask: (id: string) =>
     request<QualityTask>(`/api/quality/tasks/${id}/cancel`, { method: 'POST' }),

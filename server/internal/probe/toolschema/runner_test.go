@@ -211,6 +211,96 @@ func TestRunReruns(t *testing.T) {
 	}
 }
 
+// runFakeAll 同 runFake，但收集每个模式按序的全部上报（在途 + 终态），用于验证重试注记。
+func runFakeAll(t *testing.T, handler http.Handler, params probe.Params) map[string][]probe.CaseResult {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	schema, err := probe.DecodeUseNumber([]byte(testSchemaJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := compileSchema(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []Case{{Suite: "TestFake", Line: 1, Reason: "object_parameter_schema", Schema: schema}}
+
+	var mu sync.Mutex
+	reports := map[string][]probe.CaseResult{}
+	in := probe.RunInput{
+		Target: probe.Target{BaseURL: srv.URL, Model: "test-model"},
+		APIKey: "sk-test",
+		Params: params,
+		Client: srv.Client(),
+		Report: func(_ context.Context, r probe.CaseResult) error {
+			mu.Lock()
+			defer mu.Unlock()
+			reports[r.Mode] = append(reports[r.Mode], r)
+			return nil
+		},
+	}
+	if err := runSlots(context.Background(), in, cases, []*jsonschema.Schema{compiled}); err != nil {
+		t.Fatalf("runSlots: %v", err)
+	}
+	return reports
+}
+
+// 重试注记只出现在非末轮：rejected 每轮都落库，非末轮 message 带「后重试」，末轮干净。
+// 「0ms 后重试」同时证明 Retry-After: 0 被解析采纳（否则退避应为 1s）。
+func TestRetryAnnotationRejected(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "0")
+		http.Error(w, `{"error":"rate limited"}`, http.StatusTooManyRequests)
+	})
+	reports := runFakeAll(t, handler, probe.Params{Concurrency: 2, Reruns: 1})
+	for _, mode := range []string{probe.ModeNonStream, probe.ModeStream} {
+		rs := reports[mode]
+		if len(rs) != 2 {
+			t.Fatalf("%s 上报次数 = %d, want 2（每轮各一次）", mode, len(rs))
+		}
+		first, last := rs[0], rs[1]
+		if first.Status != probe.StatusRejected ||
+			!strings.Contains(first.Message, "第 1/2 次尝试失败") || !strings.Contains(first.Message, "0ms 后重试") {
+			t.Fatalf("%s 非末轮行缺重试注记: status=%s message=%s", mode, first.Status, first.Message)
+		}
+		if last.Status != probe.StatusRejected || last.Attempts != 2 {
+			t.Fatalf("%s 末轮 status=%s attempts=%d, want rejected/2", mode, last.Status, last.Attempts)
+		}
+		if strings.Contains(last.Message, "后重试") {
+			t.Fatalf("%s 末轮不应残留重试注记: %s", mode, last.Message)
+		}
+	}
+}
+
+// toolschema 连 violated 也重试（对齐 KVV），注记同样适用；200 无 Retry-After → 退避 1s。
+func TestRetryAnnotationViolated(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req["stream"] == true {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			return
+		}
+		writeJSONResp(w, map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "拒绝调用"}}}})
+	})
+	reports := runFakeAll(t, handler, probe.Params{Concurrency: 2, Reruns: 1})
+	for _, mode := range []string{probe.ModeNonStream, probe.ModeStream} {
+		rs := reports[mode]
+		if len(rs) != 2 {
+			t.Fatalf("%s 上报次数 = %d, want 2", mode, len(rs))
+		}
+		if rs[0].Status != probe.StatusViolated || !strings.Contains(rs[0].Message, "1s 后重试") {
+			t.Fatalf("%s 非末轮 violated 行缺退避注记: status=%s message=%s", mode, rs[0].Status, rs[0].Message)
+		}
+		if rs[1].Status != probe.StatusViolated || strings.Contains(rs[1].Message, "后重试") {
+			t.Fatalf("%s 末轮: status=%s message=%s", mode, rs[1].Status, rs[1].Message)
+		}
+	}
+}
+
 func TestExtractStreamMultiIndex(t *testing.T) {
 	// index 0 是别的工具，index 1 才是目标：必须按 name 精确匹配选中 index 1
 	chunk := func(tc map[string]any) string {

@@ -33,7 +33,7 @@ func init() {
 	}
 }
 
-// All 返回全部检测项（注册序即展示序，便宜的排前面）。
+// All 返回全部检测项（注册序即展示序，请求数少的排前面）。
 func All() []probe.Probe {
 	return all
 }

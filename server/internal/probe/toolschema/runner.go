@@ -42,7 +42,6 @@ func New() probe.Probe {
 			ID:               probeID,
 			Name:             "工具调用 JSON Schema 遵从",
 			Description:      "发送带 JSON Schema 约束的工具定义（tool_choice=required），校验模型返回的工具调用参数是否符合 Draft 2020-12 Schema。每个用例分别以非流式与流式各测一次。移植自 KVV tool_call_json_schema。",
-			CostTier:         "medium",
 			Protocols:        []string{"openai_chat"},
 			CaseCount:        caseCount,
 			RequestsPerCase:  2, // 非流式 + 流式
@@ -72,6 +71,11 @@ type slotState struct {
 	attempts int
 	status   string
 	counted  bool // 是否已计入 progress done（仅首轮完成计一次）
+	// retryHeader 本次尝试响应的头（仅非 2xx 时留存），供重试时解析 Retry-After
+	retryHeader http.Header
+	// nextTry 退避 deadline：下一轮执行本槽位前须睡到此刻。轮次屏障天然吸收
+	// 大部分等待（其他槽位跑完时 deadline 多已过期），零值 = 无需等待。
+	nextTry time.Time
 }
 
 // runState 单次任务运行的共享状态。
@@ -124,7 +128,7 @@ func runSlots(ctx context.Context, in probe.RunInput, cases []Case, compiled []*
 
 	pending := slots
 	for round := 0; ; round++ {
-		if err := st.runRound(ctx, pending, concurrency); err != nil {
+		if err := st.runRound(ctx, pending, concurrency, round >= in.Params.Reruns); err != nil {
 			return err
 		}
 		var failed []*slotState
@@ -140,11 +144,17 @@ func runSlots(ctx context.Context, in probe.RunInput, cases []Case, compiled []*
 	}
 }
 
-func (st *runState) runRound(ctx context.Context, pending []*slotState, concurrency int) error {
+// runRound 执行一轮；lastRound = 本轮后不再重跑（失败即终态，不加重试注记）。
+func (st *runState) runRound(ctx context.Context, pending []*slotState, concurrency int, lastRound bool) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(concurrency)
 	for _, s := range pending {
 		g.Go(func() error {
+			// 补足上一轮失败设下的退避 deadline（首轮零值已过期直接通过）。
+			// 睡眠占用并发槽是已知取舍：deadline 制已把实际等待压到最低。
+			if err := probe.SleepUntil(gctx, s.nextTry); err != nil {
+				return err
+			}
 			if gctx.Err() != nil {
 				return gctx.Err()
 			}
@@ -157,6 +167,14 @@ func (st *runState) runRound(ctx context.Context, pending []*slotState, concurre
 			}
 			res.Attempts = s.attempts
 			s.status = res.Status
+			// 失败且还会重跑：行照常落库（下一轮同键幂等覆盖），message 注记
+			// 让用户在退避窗口里知道这不是终态；同时记下退避 deadline。
+			if res.Status != probe.StatusPassed && !lastRound {
+				delay := probe.RetryDelay(s.attempts, s.retryHeader)
+				s.nextTry = time.Now().Add(delay)
+				res.Message = probe.TruncateMessage(fmt.Sprintf("%s；第 %d/%d 次尝试失败，%s 后重试",
+					res.Message, s.attempts, st.in.Params.Reruns+1, probe.FmtDelay(delay)))
+			}
 			if err := st.in.Report(gctx, res); err != nil {
 				return fmt.Errorf("结果落库失败: %w", err)
 			}
@@ -185,15 +203,16 @@ func (st *runState) runRound(ctx context.Context, pending []*slotState, concurre
 //	否则 → passed
 func (st *runState) runCase(ctx context.Context, s *slotState) probe.CaseResult {
 	c := &st.cases[s.caseIdx]
+	s.retryHeader = nil // 每次尝试重置，绝不带着上次的 Retry-After 计算这次的退避
 	res := probe.CaseResult{Probe: probeID, Suite: c.Suite, Line: c.Line, Mode: s.mode, SelectionReason: c.Reason}
 	rejected := func(msg string) probe.CaseResult {
 		res.Status = probe.StatusRejected
-		res.Message = truncateMessage(msg)
+		res.Message = probe.TruncateMessage(msg)
 		return res
 	}
 	violated := func(msg string) probe.CaseResult {
 		res.Status = probe.StatusViolated
-		res.Message = truncateMessage(msg)
+		res.Message = probe.TruncateMessage(msg)
 		return res
 	}
 
@@ -219,6 +238,7 @@ func (st *runState) runCase(ctx context.Context, s *slotState) probe.CaseResult 
 	defer resp.Body.Close()
 	res.HTTPStatus = resp.StatusCode
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		s.retryHeader = resp.Header // 留存供重试解析 Retry-After（尊重上游节流）
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		res.LatencyMs = int(time.Since(start).Milliseconds())
 		msg := strings.TrimSpace(string(snippet))
@@ -242,7 +262,7 @@ func (st *runState) runCase(ctx context.Context, s *slotState) probe.CaseResult 
 		return violated(violation)
 	}
 
-	res.Arguments = truncateRunes(arguments, 1000)
+	res.Arguments = probe.TruncateRunes(arguments, 1000)
 	inst, err := probe.DecodeUseNumber([]byte(arguments))
 	if err != nil {
 		return violated("arguments 不是合法 JSON: " + err.Error())
@@ -408,18 +428,5 @@ func previewJSON(v any) string {
 	if err != nil {
 		return fmt.Sprintf("%v", v)
 	}
-	return truncateRunes(string(b), 200)
-}
-
-// truncateMessage 移植 KVV _truncate：换行压成 \n 字面量，超 500 字符截断。
-func truncateMessage(s string) string {
-	return truncateRunes(strings.ReplaceAll(s, "\n", "\\n"), 500)
-}
-
-func truncateRunes(s string, limit int) string {
-	r := []rune(s)
-	if len(r) <= limit {
-		return s
-	}
-	return string(r[:limit-3]) + "..."
+	return probe.TruncateRunes(string(b), 200)
 }

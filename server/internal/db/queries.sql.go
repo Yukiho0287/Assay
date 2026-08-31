@@ -68,11 +68,20 @@ func (q *Queries) CancelTask(ctx context.Context, id uuid.UUID) (int64, error) {
 }
 
 const countTasks = `-- name: CountTasks :one
-select count(*) from tasks where kind = $1
+select count(*) from tasks
+where kind = $1
+  and ($2::text is null or status = $2::text)
+  and ($3::uuid is null or channel_id = $3::uuid)
 `
 
-func (q *Queries) CountTasks(ctx context.Context, kind string) (int64, error) {
-	row := q.db.QueryRow(ctx, countTasks, kind)
+type CountTasksParams struct {
+	Kind      string
+	Status    *string
+	ChannelID pgtype.UUID
+}
+
+func (q *Queries) CountTasks(ctx context.Context, arg CountTasksParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTasks, arg.Kind, arg.Status, arg.ChannelID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -931,14 +940,18 @@ select t.id, t.kind, t.status, t.channel_id, t.target, t.probes, t.params,
 from tasks t
 left join users u on u.id = t.created_by
 where t.kind = $1
+  and ($4::text is null or t.status = $4::text)
+  and ($5::uuid is null or t.channel_id = $5::uuid)
 order by t.created_at desc
 limit $2 offset $3
 `
 
 type ListTasksParams struct {
-	Kind   string
-	Limit  int32
-	Offset int32
+	Kind      string
+	Limit     int32
+	Offset    int32
+	Status    *string
+	ChannelID pgtype.UUID
 }
 
 type ListTasksRow struct {
@@ -960,7 +973,13 @@ type ListTasksRow struct {
 }
 
 func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]ListTasksRow, error) {
-	rows, err := q.db.Query(ctx, listTasks, arg.Kind, arg.Limit, arg.Offset)
+	rows, err := q.db.Query(ctx, listTasks,
+		arg.Kind,
+		arg.Limit,
+		arg.Offset,
+		arg.Status,
+		arg.ChannelID,
+	)
 	if err != nil {
 		return nil, err
 	}

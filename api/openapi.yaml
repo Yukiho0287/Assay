@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Assay API
   description: LLM 渠道检测平台 API。本文件是前后端契约的唯一真相源（契约优先）。
-  version: 0.7.0
+  version: 0.8.0
 servers:
   - url: /api
 paths:
@@ -614,7 +614,7 @@ paths:
                 $ref: "#/components/schemas/Error"
     get:
       operationId: listQualityTasks
-      summary: 质量检测任务历史（需 quality 权限；按创建时间倒序）
+      summary: 质量检测任务历史（需 quality 权限；按创建时间倒序，可按状态/渠道筛选）
       tags: [quality]
       parameters:
         - name: limit
@@ -630,6 +630,17 @@ paths:
             type: integer
             minimum: 0
             default: 0
+        - name: status
+          in: query
+          description: 按任务状态筛选；缺省不过滤
+          schema:
+            $ref: "#/components/schemas/TaskStatus"
+        - name: channelId
+          in: query
+          description: 按渠道筛选；缺省不过滤（渠道删除后其任务 channel_id 置空，仅在不过滤时可见）
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: 任务列表分页
@@ -1176,13 +1187,9 @@ components:
         error:
           description: 失败摘要（超时/连接错误/上游错误体截断）
           type: string
-    CostTier:
-      description: 烧钱等级（便宜的挡在贵的前面）
-      type: string
-      enum: [cheap, medium, expensive]
     ProbeInfo:
       type: object
-      required: [id, name, description, costTier, protocols, needsControl, needsPricing, caseCount, requestsPerCase, supportsMaxCases]
+      required: [id, name, description, protocols, needsControl, needsPricing, caseCount, requestsPerCase, supportsMaxCases]
       properties:
         id:
           description: 检测项唯一标识（如 tool_call_json_schema）
@@ -1192,8 +1199,6 @@ components:
           type: string
         description:
           type: string
-        costTier:
-          $ref: "#/components/schemas/CostTier"
         protocols:
           description: 适用协议（渠道须至少声明其中之一）
           type: array

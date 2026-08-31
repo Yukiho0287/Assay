@@ -57,27 +57,6 @@ func (e CaseStatus) Valid() bool {
 	}
 }
 
-// Defines values for CostTier.
-const (
-	Cheap     CostTier = "cheap"
-	Expensive CostTier = "expensive"
-	Medium    CostTier = "medium"
-)
-
-// Valid indicates whether the value is a known member of the CostTier enum.
-func (e CostTier) Valid() bool {
-	switch e {
-	case Cheap:
-		return true
-	case Expensive:
-		return true
-	case Medium:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for Currency.
 const (
 	CNY Currency = "CNY"
@@ -333,9 +312,6 @@ type ConnectivityTestRequest struct {
 	ModelId openapi_types.UUID `json:"modelId"`
 }
 
-// CostTier 烧钱等级（便宜的挡在贵的前面）
-type CostTier string
-
 // Currency 渠道定价币种（仅标注，不做汇率换算）
 type Currency string
 
@@ -406,11 +382,8 @@ type PermissionMap struct {
 // ProbeInfo defines model for ProbeInfo.
 type ProbeInfo struct {
 	// CaseCount 全量用例数
-	CaseCount int `json:"caseCount"`
-
-	// CostTier 烧钱等级（便宜的挡在贵的前面）
-	CostTier    CostTier `json:"costTier"`
-	Description string   `json:"description"`
+	CaseCount   int    `json:"caseCount"`
+	Description string `json:"description"`
 
 	// Id 检测项唯一标识（如 tool_call_json_schema）
 	Id string `json:"id"`
@@ -692,6 +665,12 @@ type Unauthorized = Error
 type ListQualityTasksParams struct {
 	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Status 按任务状态筛选；缺省不过滤
+	Status *TaskStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// ChannelId 按渠道筛选；缺省不过滤（渠道删除后其任务 channel_id 置空，仅在不过滤时可见）
+	ChannelId *openapi_types.UUID `form:"channelId,omitempty" json:"channelId,omitempty"`
 }
 
 // ExportQualityTaskParams defines parameters for ExportQualityTask.
@@ -793,7 +772,7 @@ type ServerInterface interface {
 	// ListProbes 检测项注册表（需 quality 权限；含元数据供发起页勾选）
 	// (GET /probes)
 	ListProbes(w http.ResponseWriter, r *http.Request)
-	// ListQualityTasks 质量检测任务历史（需 quality 权限；按创建时间倒序）
+	// ListQualityTasks 质量检测任务历史（需 quality 权限；按创建时间倒序，可按状态/渠道筛选）
 	// (GET /quality/tasks)
 	ListQualityTasks(w http.ResponseWriter, r *http.Request, params ListQualityTasksParams)
 	// CreateQualityTask 创建质量检测任务（需 quality 权限；创建时快照检测对象参数，入队后由 worker 执行）
@@ -1204,6 +1183,32 @@ func (siw *ServerInterfaceWrapper) ListQualityTasks(w http.ResponseWriter, r *ht
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "channelId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "channelId", r.URL.Query(), &params.ChannelId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "channelId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "channelId", Err: err})
 		}
 		return
 	}

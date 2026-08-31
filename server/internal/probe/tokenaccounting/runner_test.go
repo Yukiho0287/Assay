@@ -28,11 +28,15 @@ type fakeVendor struct {
 	omitUsageNonStream bool
 	streamOmitUsage    bool
 	streamPtDelta      int64
-	status             int // >0 时所有请求返回该状态码
+	status             int    // >0 时所有请求返回该状态码
+	retryAfter         string // 非空时随错误响应带 Retry-After 头
 }
 
 func (f *fakeVendor) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.status > 0 {
+		if f.retryAfter != "" {
+			w.Header().Set("Retry-After", f.retryAfter)
+		}
 		w.WriteHeader(f.status)
 		io.WriteString(w, `{"error":{"message":"rate limited"}}`)
 		return
@@ -292,8 +296,9 @@ func TestNonStreamMissingUsage(t *testing.T) {
 }
 
 // 429 → 全 rejected，且只重试 rejected：Reruns=1 → attempts=2。
+// Retry-After: 0 让退避窗口归零，测试不真睡。
 func TestRejectedRetriesAndAttempts(t *testing.T) {
-	results := runProbe(t, &fakeVendor{status: http.StatusTooManyRequests}, probe.Params{Concurrency: 2, Reruns: 1})
+	results := runProbe(t, &fakeVendor{status: http.StatusTooManyRequests, retryAfter: "0"}, probe.Params{Concurrency: 2, Reruns: 1})
 	for k, r := range results {
 		if r.Status != probe.StatusRejected {
 			t.Fatalf("%s status = %s, want rejected", k, r.Status)
@@ -462,6 +467,111 @@ func TestEarlyReportCollectedRows(t *testing.T) {
 	}
 	for k := range reported {
 		wantStatus(t, reported, k, probe.StatusPassed) // collected 必须被终态覆盖，不残留
+	}
+}
+
+// 在途重试可见性：每次失败先报 rejected + 重试说明，再退避重试；末次失败报终态无注记。
+// 「0ms 后重试」同时证明 Retry-After: 0 被解析采纳（否则退避应为 1s）。
+func TestRetryInFlightVisibility(t *testing.T) {
+	f := &fakeVendor{seen: map[int]int{}, status: http.StatusTooManyRequests, retryAfter: "0"}
+	srv := httptest.NewServer(f)
+	t.Cleanup(srv.Close)
+
+	var mu sync.Mutex
+	reports := map[string][]probe.CaseResult{} // 槽位 → 按序全部上报
+	in := probe.RunInput{
+		Target: probe.Target{BaseURL: srv.URL, Model: "test-model", Protocols: []string{"openai_chat"}},
+		APIKey: "test-key",
+		Params: probe.Params{Concurrency: 4, Reruns: 1},
+		Client: srv.Client(),
+		Report: func(_ context.Context, r probe.CaseResult) error {
+			mu.Lock()
+			defer mu.Unlock()
+			k := key(r.Suite, r.Line, r.Mode)
+			reports[k] = append(reports[k], r)
+			return nil
+		},
+	}
+	if err := New().Run(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(reports) != 9 {
+		t.Fatalf("槽位数 = %d, want 9", len(reports))
+	}
+	for k, rs := range reports {
+		// 在途 1 次 + 采集期终态 1 次 + 评估期幂等重报 1 次
+		if len(rs) != 3 {
+			t.Fatalf("%s 上报次数 = %d, want 3", k, len(rs))
+		}
+		inflight, final := rs[0], rs[2]
+		if rs[1].Status != final.Status || rs[1].Message != final.Message {
+			t.Fatalf("%s 评估期重报应与采集期终态一致（幂等）: %+v vs %+v", k, rs[1], final)
+		}
+		if inflight.Status != probe.StatusRejected {
+			t.Fatalf("%s 在途行 status = %s, want rejected", k, inflight.Status)
+		}
+		if !strings.Contains(inflight.Message, "第 1/2 次尝试失败") || !strings.Contains(inflight.Message, "0ms 后重试") {
+			t.Fatalf("%s 在途行 message 缺重试说明: %s", k, inflight.Message)
+		}
+		if final.Status != probe.StatusRejected || final.Attempts != 2 {
+			t.Fatalf("%s 终态 status=%s attempts=%d, want rejected/2", k, final.Status, final.Attempts)
+		}
+		if strings.Contains(final.Message, "后重试") {
+			t.Fatalf("%s 终态不应残留重试注记: %s", k, final.Message)
+		}
+	}
+}
+
+// 退避睡眠可取消：Retry-After: 60 把重试钉在远处，取消后 Run 必须立即返回而非睡满。
+func TestRetrySleepCancelable(t *testing.T) {
+	f := &fakeVendor{seen: map[int]int{}, status: http.StatusTooManyRequests, retryAfter: "60"}
+	srv := httptest.NewServer(f)
+	t.Cleanup(srv.Close)
+
+	var mu sync.Mutex
+	inflight := 0
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	in := probe.RunInput{
+		Target: probe.Target{BaseURL: srv.URL, Model: "test-model", Protocols: []string{"openai_chat"}},
+		APIKey: "test-key",
+		Params: probe.Params{Concurrency: 4, Reruns: 1},
+		Client: srv.Client(),
+		Report: func(_ context.Context, r probe.CaseResult) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if strings.Contains(r.Message, "后重试") {
+				inflight++
+			}
+			return nil
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- New().Run(ctx, in) }()
+
+	// 等到至少一条在途行（说明有槽位已进入退避睡眠窗口）再取消
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		n := inflight
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("等不到在途重试行")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("取消后 Run 应返回错误")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("取消后 2s 内未返回——退避睡眠未被打断")
 	}
 }
 

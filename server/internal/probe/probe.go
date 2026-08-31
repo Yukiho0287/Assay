@@ -103,7 +103,6 @@ type Info struct {
 	ID           string
 	Name         string
 	Description  string
-	CostTier     string // cheap | medium | expensive
 	Protocols    []string
 	NeedsControl bool
 	NeedsPricing bool
