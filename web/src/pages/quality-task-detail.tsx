@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ChevronDown, FileCode, FileJson, Loader2, RotateCcw, X } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router'
 import { errText } from '@/components/channel-form-dialog'
-import { CaseStatusBadge, gradeColor, TaskStatusBadge } from '@/components/quality-badges'
+import { CaseStatusBadge, scoreColor, TaskStatusBadge } from '@/components/quality-badges'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -281,15 +281,10 @@ function ScoreboardCard({ taskId, report }: { taskId: string; report: QualityRep
           <div className="flex items-baseline gap-3">
             <span className="text-sm text-muted-foreground">{t('quality.overallScore')}</span>
             <span
-              className={`text-4xl font-semibold tabular-nums ${gradeColor[report.grade ?? ''] ?? ''}`}
+              className={`text-4xl font-semibold tabular-nums ${scoreColor(report.score)}`}
             >
               {report.score.toFixed(1)}
             </span>
-            {report.grade && (
-              <span className={`text-2xl font-semibold ${gradeColor[report.grade] ?? ''}`}>
-                {report.grade}
-              </span>
-            )}
           </div>
         )}
         <div className="grid gap-6 lg:grid-cols-2">

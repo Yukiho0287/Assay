@@ -152,7 +152,7 @@ function ScoreZone({
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
-        <ScoreText score={selected.score} grade={selected.grade} className="text-3xl" />
+        <ScoreText score={selected.score} className="text-3xl" />
         {selected.taskStatus !== 'succeeded' && <TaskStatusBadge status={selected.taskStatus} />}
       </div>
       {models.length > 1 ? (

@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Assay API
   description: LLM 渠道检测平台 API。本文件是前后端契约的唯一真相源（契约优先）。
-  version: 0.9.0
+  version: 0.10.0
 servers:
   - url: /api
 paths:
@@ -1304,8 +1304,6 @@ components:
         score:
           description: 总分 0-100，口径与任务报告一致；无已采样检查点时缺省
           type: number
-        grade:
-          $ref: "#/components/schemas/Grade"
     OverviewChannel:
       allOf:
         - $ref: "#/components/schemas/Channel"
@@ -1510,8 +1508,6 @@ components:
         score:
           description: 总分 0-100；仅列表接口对终态任务返回，按当前检查点注册表口径即时计算、绝不持久化；排队/运行中或无已采样检查点时缺省
           type: number
-        grade:
-          $ref: "#/components/schemas/Grade"
     QualityTaskList:
       type: object
       required: [items, total]
@@ -1552,10 +1548,6 @@ components:
           type: string
         attempts:
           type: integer
-    Grade:
-      description: 评分分级：A ≥95、B ≥80、C ≥60、D <60
-      type: string
-      enum: [A, B, C, D]
     CheckpointScore:
       description: 一个评分检查点的聚合结果；得分 = passed/total × 100（rejected 与 violated 均计失败）
       type: object
@@ -1609,8 +1601,6 @@ components:
         score:
           description: 总分 0-100；无任何已采样检查点时缺省
           type: number
-        grade:
-          $ref: "#/components/schemas/Grade"
         incomplete:
           description: 任务非正常结束（failed/canceled），评分仅基于已采集数据
           type: boolean

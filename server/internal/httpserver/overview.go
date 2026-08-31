@@ -66,7 +66,7 @@ func (h *handlers) ListOverviewChannels(w http.ResponseWriter, r *http.Request) 
 			ts := t.FinishedAt.Time
 			row.FinishedAt = &ts
 		}
-		_, row.Score, row.Grade = scoreProbes(t.Probes, countsByTask[t.ID])
+		_, row.Score = scoreProbes(t.Probes, countsByTask[t.ID])
 		cid := uuid.UUID(t.ChannelID.Bytes)
 		byChannel[cid] = append(byChannel[cid], row)
 	}

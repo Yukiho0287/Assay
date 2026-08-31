@@ -466,7 +466,7 @@ function TaskRow({
         )}
       </TableCell>
       <TableCell>
-        <ScoreText score={task.score} grade={task.grade} className="text-sm font-medium" />
+        <ScoreText score={task.score} className="text-sm font-medium" />
       </TableCell>
       <TableCell className="text-muted-foreground">{task.createdBy ?? '—'}</TableCell>
       <TableCell className="text-muted-foreground">

@@ -93,30 +93,6 @@ func (e Currency) Valid() bool {
 	}
 }
 
-// Defines values for Grade.
-const (
-	A Grade = "A"
-	B Grade = "B"
-	C Grade = "C"
-	D Grade = "D"
-)
-
-// Valid indicates whether the value is a known member of the Grade enum.
-func (e Grade) Valid() bool {
-	switch e {
-	case A:
-		return true
-	case B:
-		return true
-	case C:
-		return true
-	case D:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for HealthStatus.
 const (
 	Ok HealthStatus = "ok"
@@ -392,9 +368,6 @@ type Error struct {
 	Error string `json:"error"`
 }
 
-// Grade 评分分级：A ≥95、B ≥80、C ≥60、D <60
-type Grade string
-
 // Health defines model for Health.
 type Health struct {
 	Status HealthStatus `json:"status"`
@@ -463,9 +436,6 @@ type OverviewChannel struct {
 // OverviewModelScore 总览卡片单模型得分行：该渠道 × 模型名快照的最近一个终态质量任务即时计算；taskStatus 非 succeeded 时得分基于不完整采样，前端须挂状态标注
 type OverviewModelScore struct {
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
-
-	// Grade 评分分级：A ≥95、B ≥80、C ≥60、D <60
-	Grade *Grade `json:"grade,omitempty"`
 
 	// Model 模型名快照（与任务快照、连通历史同口径）
 	Model string `json:"model"`
@@ -573,9 +543,6 @@ type QualityExport struct {
 type QualityReport struct {
 	GeneratedAt time.Time `json:"generatedAt"`
 
-	// Grade 评分分级：A ≥95、B ≥80、C ≥60、D <60
-	Grade *Grade `json:"grade,omitempty"`
-
 	// Incomplete 任务非正常结束（failed/canceled），评分仅基于已采集数据
 	Incomplete *bool        `json:"incomplete,omitempty"`
 	Probes     []ProbeScore `json:"probes"`
@@ -594,11 +561,8 @@ type QualityTask struct {
 	CreatedBy *string `json:"createdBy,omitempty"`
 
 	// Error 任务级失败原因（用例级失败不算任务失败）
-	Error      *string    `json:"error,omitempty"`
-	FinishedAt *time.Time `json:"finishedAt,omitempty"`
-
-	// Grade 评分分级：A ≥95、B ≥80、C ≥60、D <60
-	Grade         *Grade             `json:"grade,omitempty"`
+	Error         *string            `json:"error,omitempty"`
+	FinishedAt    *time.Time         `json:"finishedAt,omitempty"`
 	Id            openapi_types.UUID `json:"id"`
 	Params        QualityTaskParams  `json:"params"`
 	Probes        []string           `json:"probes"`

@@ -15,7 +15,7 @@ func row(probeID, suite string, line int, mode, status string) db.ListTaskCaseRe
 
 // TestBuildReportTokenAccounting 锁死检查点匹配与加权数学：
 // marginal 4/4 过（100 分 ×权2）、determinism 2/3 过（66.7 分 ×权2）、stream 1/2 过（50 分 ×权1），
-// probe 分 = (100×2 + 66.7×2 + 50×1) / 5 = 76.68 → 76.7，单 probe 即总分，grade C。
+// probe 分 = (100×2 + 66.7×2 + 50×1) / 5 = 76.68 → 76.7，单 probe 即总分。
 func TestBuildReportTokenAccounting(t *testing.T) {
 	task := db.GetTaskRow{ID: uuid.New(), Status: "succeeded", Probes: []string{"token_accounting"}}
 	rows := []db.ListTaskCaseResultsRow{
@@ -46,9 +46,6 @@ func TestBuildReportTokenAccounting(t *testing.T) {
 	}
 	if *r.Probes[0].Score != 76.7 || *r.Score != 76.7 {
 		t.Errorf("加权分应 76.7，得 probe=%v total=%v", *r.Probes[0].Score, *r.Score)
-	}
-	if string(*r.Grade) != "C" {
-		t.Errorf("76.7 分应为 C 级，得 %v", *r.Grade)
 	}
 	if r.Incomplete != nil {
 		t.Errorf("succeeded 任务不应标 incomplete")
@@ -103,13 +100,10 @@ func TestScoreProbesCountEquivalence(t *testing.T) {
 		{Probe: "tool_call_json_schema", Suite: "TestBasicTypes", Mode: "non_stream", Status: "passed", N: 1},
 		{Probe: "tool_call_json_schema", Suite: "TestBasicTypes", Mode: "stream", Status: "collected", N: 1},
 	}
-	_, byRow, gradeRow := scoreProbes(probeIDs, rowCounts)
-	_, byGroup, gradeGroup := scoreProbes(probeIDs, grouped)
+	_, byRow := scoreProbes(probeIDs, rowCounts)
+	_, byGroup := scoreProbes(probeIDs, grouped)
 	if byRow == nil || byGroup == nil || *byRow != *byGroup {
 		t.Fatalf("两路径总分必须一致，得 row=%v group=%v", byRow, byGroup)
-	}
-	if *gradeRow != *gradeGroup {
-		t.Fatalf("两路径分级必须一致，得 row=%v group=%v", *gradeRow, *gradeGroup)
 	}
 }
 
@@ -138,8 +132,5 @@ func TestBuildReportMultiProbe(t *testing.T) {
 	}
 	if *r.Score != 75 {
 		t.Errorf("总分应 (100+50)/2=75，得 %v", *r.Score)
-	}
-	if string(*r.Grade) != "C" {
-		t.Errorf("75 分应为 C，得 %v", *r.Grade)
 	}
 }

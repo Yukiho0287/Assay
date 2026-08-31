@@ -695,7 +695,6 @@ export interface components {
             finishedAt?: string;
             /** @description 总分 0-100，口径与任务报告一致；无已采样检查点时缺省 */
             score?: number;
-            grade?: components["schemas"]["Grade"];
         };
         OverviewChannel: components["schemas"]["Channel"] & {
             /** @description 有终态质量任务的模型得分行（按模型名去重取最近一次） */
@@ -814,7 +813,6 @@ export interface components {
             stats?: components["schemas"]["TaskStats"];
             /** @description 总分 0-100；仅列表接口对终态任务返回，按当前检查点注册表口径即时计算、绝不持久化；排队/运行中或无已采样检查点时缺省 */
             score?: number;
-            grade?: components["schemas"]["Grade"];
         };
         QualityTaskList: {
             items: components["schemas"]["QualityTask"][];
@@ -837,11 +835,6 @@ export interface components {
             arguments?: string;
             attempts: number;
         };
-        /**
-         * @description 评分分级：A ≥95、B ≥80、C ≥60、D <60
-         * @enum {string}
-         */
-        Grade: "A" | "B" | "C" | "D";
         /** @description 一个评分检查点的聚合结果；得分 = passed/total × 100（rejected 与 violated 均计失败） */
         CheckpointScore: {
             /** @description 检查点稳定标识（检测项元数据声明） */
@@ -871,7 +864,6 @@ export interface components {
             status: components["schemas"]["TaskStatus"];
             /** @description 总分 0-100；无任何已采样检查点时缺省 */
             score?: number;
-            grade?: components["schemas"]["Grade"];
             /** @description 任务非正常结束（failed/canceled），评分仅基于已采集数据 */
             incomplete?: boolean;
             probes: components["schemas"]["ProbeScore"][];

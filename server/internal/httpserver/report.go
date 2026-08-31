@@ -125,7 +125,7 @@ func buildReport(task db.GetTaskRow, rows []db.ListTaskCaseResultsRow) api.Quali
 	for _, row := range rows {
 		counts = append(counts, caseCount{Probe: row.Probe, Suite: row.Suite, Mode: row.Mode, Status: row.Status, N: 1})
 	}
-	report.Probes, report.Score, report.Grade = scoreProbes(task.Probes, counts)
+	report.Probes, report.Score = scoreProbes(task.Probes, counts)
 	return report
 }
 
@@ -154,7 +154,7 @@ func (h *handlers) fillTaskScores(ctx context.Context, items []api.QualityTask) 
 		if !isTerminalTask(string(items[i].Status)) {
 			continue
 		}
-		_, items[i].Score, items[i].Grade = scoreProbes(items[i].Probes, counts[items[i].Id])
+		_, items[i].Score = scoreProbes(items[i].Probes, counts[items[i].Id])
 	}
 	return nil
 }
@@ -169,7 +169,7 @@ type caseCount struct {
 // scoreProbes 评分数学的唯一实现：检查点得分 = 命中用例 passed 占比 ×100
 //（rejected 与 violated 均计失败；collected 不是判定结论，不参与计数），
 // 检测项得分 = 检查点按权重加权平均（total=0 的未采样检查点不参与），总分 = 各检测项等权平均。
-func scoreProbes(probeIDs []string, counts []caseCount) (probes []api.ProbeScore, overall *float32, grade *api.Grade) {
+func scoreProbes(probeIDs []string, counts []caseCount) (probes []api.ProbeScore, overall *float32) {
 	probes = make([]api.ProbeScore, 0, len(probeIDs))
 	var probeScoreSum float64
 	var probeScoreN int
@@ -220,27 +220,12 @@ func scoreProbes(probeIDs []string, counts []caseCount) (probes []api.ProbeScore
 	if probeScoreN > 0 {
 		v := round1(probeScoreSum / float64(probeScoreN))
 		overall = &v
-		g := gradeOf(float64(v))
-		grade = &g
 	}
-	return probes, overall, grade
+	return probes, overall
 }
 
 func round1(v float64) float32 {
 	return float32(math.Round(v*10) / 10)
-}
-
-func gradeOf(score float64) api.Grade {
-	switch {
-	case score >= 95:
-		return api.A
-	case score >= 80:
-		return api.B
-	case score >= 60:
-		return api.C
-	default:
-		return api.D
-	}
 }
 
 // ——— JUnit XML 渲染（知识库落地形态要求：KVV 式评分板 + junit）———
@@ -309,9 +294,7 @@ func buildJUnit(task db.GetTaskRow, rows []db.ListTaskCaseResultsRow, report api
 	}
 	if report.Score != nil {
 		root.Properties = append(root.Properties,
-			junitProperty{Name: "assay.score", Value: fmt.Sprintf("%.1f", *report.Score)},
-			junitProperty{Name: "assay.grade", Value: string(*report.Grade)},
-		)
+			junitProperty{Name: "assay.score", Value: fmt.Sprintf("%.1f", *report.Score)})
 	}
 
 	var rootMs int
