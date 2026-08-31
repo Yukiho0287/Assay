@@ -1043,8 +1043,8 @@ export interface components {
              */
             requestsPerStage: number;
             /**
-             * @description 每档预热请求数（评估时剔除，不计入指标）
-             * @default 2
+             * @description 每档预热请求数（评估时剔除，不计入指标）；缺省 0（不预热）
+             * @default 0
              */
             warmupPerStage: number;
             /**
