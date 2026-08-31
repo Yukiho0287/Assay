@@ -11,7 +11,8 @@ import (
 // all 注册序即展示序：请求量轻的排前面（阶梯并发 < RPM < TPM）。
 var all = []stability.Probe{
 	stability.NewConcurrencyLadder(),
-	// Phase 2: rpm_probe / Phase 3: tpm_probe
+	stability.NewRpmProbe(),
+	stability.NewTpmProbe(),
 }
 
 // init fail-fast：ID 缺失/重复在进程启动时暴露。稳定性不校验 Checkpoints（产出指标非 pass/fail）。

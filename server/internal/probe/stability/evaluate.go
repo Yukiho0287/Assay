@@ -147,3 +147,45 @@ func evaluateOverall(probeID string, samples []Sample) StageMetrics {
 	m.TokensPerSec = 0
 	return StageMetrics{Probe: probeID, Stage: StageOverall, StageIndex: StageOverallIndex, Metrics: m}
 }
+
+// evaluatePacedStage 开环速率档评估：聚合样本 + 标注目标/达成到达率、限速判定与限速头。
+// 开环无预热概念，全部样本计入。
+func evaluatePacedStage(probeID, stage string, stageIndex int, targetRate, achievedRate float64, rateLimited bool, rateHeaders map[string]string, samples []Sample) StageMetrics {
+	m := aggregate(samples)
+	m.TargetRate = math.Round(targetRate*100) / 100
+	m.AchievedRate = achievedRate
+	m.RateLimited = rateLimited
+	m.RateLimitHeaders = rateHeaders
+	return StageMetrics{Probe: probeID, Stage: stage, StageIndex: stageIndex, Metrics: m}
+}
+
+// evaluateRpmOverall RPM probe 的 __overall__ 行：收敛的可持续 RPM 边界 + 是否触顶护栏 + 限速头快照。
+func evaluateRpmOverall(probeID string, samples []Sample, convergedRpm float64, reachedCap bool, rateHeaders map[string]string) StageMetrics {
+	m := aggregate(samples)
+	m.ThroughputRps = 0 // 跨档混合吞吐无意义
+	m.TokensPerSec = 0
+	m.ConvergedRpm = math.Round(convergedRpm*100) / 100
+	m.ReachedCap = reachedCap
+	m.RateLimitHeaders = rateHeaders
+	return StageMetrics{Probe: probeID, Stage: StageOverall, StageIndex: StageOverallIndex, Metrics: m}
+}
+
+// evaluateTpmStage 开环 token 速率档评估：在开环请求档基础上叠加目标/实测 token 到达率标注。
+// achievedTokenRate 为实测 token 吞吐（输入+输出），已由调用方按发压窗口算好。
+func evaluateTpmStage(probeID, stage string, stageIndex int, targetRate, achievedRate, targetTokenRate, achievedTokenRate float64, rateLimited bool, rateHeaders map[string]string, samples []Sample) StageMetrics {
+	sm := evaluatePacedStage(probeID, stage, stageIndex, targetRate, achievedRate, rateLimited, rateHeaders, samples)
+	sm.Metrics.TargetTokenRate = math.Round(targetTokenRate*100) / 100
+	sm.Metrics.AchievedTokenRate = math.Round(achievedTokenRate*100) / 100
+	return sm
+}
+
+// evaluateTpmOverall TPM probe 的 __overall__ 行：收敛的可持续 TPM 边界（token/min）+ 是否触顶护栏 + 限速头。
+func evaluateTpmOverall(probeID string, samples []Sample, convergedTpm float64, reachedCap bool, rateHeaders map[string]string) StageMetrics {
+	m := aggregate(samples)
+	m.ThroughputRps = 0 // 跨档混合吞吐无意义
+	m.TokensPerSec = 0
+	m.ConvergedTpm = math.Round(convergedTpm*100) / 100
+	m.ReachedCap = reachedCap
+	m.RateLimitHeaders = rateHeaders
+	return StageMetrics{Probe: probeID, Stage: StageOverall, StageIndex: StageOverallIndex, Metrics: m}
+}

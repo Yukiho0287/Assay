@@ -1053,6 +1053,76 @@ export interface components {
              */
             ladderMaxTokens: number;
             /**
+             * @description RPM 实测起始到达率（req/s，开环）
+             * @default 2
+             */
+            rpmStartRate: number;
+            /**
+             * @description RPM 探测速率护栏上限（req/s）；升到此仍不限速则报「边界≥上限」
+             * @default 20
+             */
+            rpmMaxRate: number;
+            /**
+             * @description RPM 每档发压时长（秒）
+             * @default 10
+             */
+            rpmStageSec: number;
+            /**
+             * @description RPM 在途请求上限（防雪崩兜底）
+             * @default 128
+             */
+            rpmMaxInFlight: number;
+            /**
+             * @description RPM 每请求生成上限（只关心请求速率，取小）
+             * @default 16
+             */
+            rpmMaxTokens: number;
+            /**
+             * @description 判定某档触发限速的 429 占比阈值（0-1）
+             * @default 0.1
+             */
+            rpmLimitThreshold: number;
+            /**
+             * @description 找到限速档后二分细化真实边界的步数
+             * @default 4
+             */
+            rpmBinarySteps: number;
+            /**
+             * @description TPM 实测起始 token 到达率（token/s，开环；换算请求速率发压）
+             * @default 200
+             */
+            tpmStartRate: number;
+            /**
+             * @description TPM 探测 token 速率护栏上限（token/s）；升到此仍不限速则报「边界≥上限」
+             * @default 2000
+             */
+            tpmMaxRate: number;
+            /**
+             * @description TPM 每档发压时长（秒）
+             * @default 10
+             */
+            tpmStageSec: number;
+            /**
+             * @description TPM 在途请求上限（防雪崩兜底）
+             * @default 128
+             */
+            tpmMaxInFlight: number;
+            /**
+             * @description TPM 每请求 max_tokens 砝码（顶格数数 prompt 保证打满输出；输入+输出都计）
+             * @default 256
+             */
+            tpmMaxTokensPerReq: number;
+            /**
+             * @description 判定某档触发限速的 429 占比阈值（0-1）
+             * @default 0.1
+             */
+            tpmLimitThreshold: number;
+            /**
+             * @description 找到限速档后二分细化真实 token 速率边界的步数
+             * @default 4
+             */
+            tpmBinarySteps: number;
+            /**
              * @description 全局请求硬闸；累计达到即收敛停止
              * @default 2000
              */
@@ -1128,6 +1198,26 @@ export interface components {
             };
             /** @description 阶梯并发档的并发数（其它 probe 缺省） */
             concurrency?: number;
+            /** @description 开环档目标到达率（req/s） */
+            targetRate?: number;
+            /** @description 开环档实际达成到达率（req/s，在途封顶会低于目标） */
+            achievedRate?: number;
+            /** @description 开环档 429 占比是否判定为触发限速 */
+            rateLimited?: boolean;
+            /** @description __overall__ RPM 收敛的可持续边界（请求/分钟） */
+            convergedRpm?: number;
+            /** @description __overall__ 探到速率护栏顶仍未限速（真实边界≥护栏） */
+            reachedCap?: boolean;
+            /** @description TPM 开环档目标 token 到达率（token/s） */
+            targetTokenRate?: number;
+            /** @description TPM 开环档实测 token 吞吐（token/s，输入+输出都计） */
+            achievedTokenRate?: number;
+            /** @description __overall__ TPM 收敛的可持续边界（token/分钟） */
+            convergedTpm?: number;
+            /** @description 最近一次响应携带的限速头快照（x-ratelimit-*\/anthropic-ratelimit-*\/retry-after） */
+            rateLimitHeaders?: {
+                [key: string]: string;
+            };
         };
         /** @description 一档（或 __overall__ probe 级）的评估结果 */
         StabilityStageMetric: {

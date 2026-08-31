@@ -31,6 +31,8 @@ var stabilityFootnotes = []string{
 	"预热样本（warmup）不计入任何指标。",
 	"吞吐（rps / tokens·s⁻¹）按样本时间跨度计（最早排定至最晚完成）；__overall__ 行不含跨档吞吐。",
 	"失败样本无延迟/计量读数，报告区分「没测到」与「测到 0」。",
+	"RPM 实测为开环恒定到达率：dispatched_at 记排定时刻而非起飞时刻（修正协调遗漏）；某档 429 占比达阈值即判为触发限速，二分收敛可持续 RPM 边界。",
+	"TPM 实测为开环恒定 token 到达率：每请求 max_tokens 砝码 + 顶格数数 prompt 打满输出，按「输入+输出都计」的每请求 token 权重换算请求速率发压；实测 token 吞吐取响应 usage 真实值，二分收敛可持续 TPM 边界。",
 }
 
 func (h *handlers) ListStabilityProbes(w http.ResponseWriter, r *http.Request) {
@@ -515,6 +517,48 @@ func resolveStabilityParams(in api.StabilityTaskParams) (stability.StabilityPara
 	}
 	if in.LadderMaxTokens != nil {
 		p.LadderMaxTokens = *in.LadderMaxTokens
+	}
+	if in.RpmStartRate != nil {
+		p.RpmStartRate = float64(*in.RpmStartRate)
+	}
+	if in.RpmMaxRate != nil {
+		p.RpmMaxRate = float64(*in.RpmMaxRate)
+	}
+	if in.RpmStageSec != nil {
+		p.RpmStageSec = *in.RpmStageSec
+	}
+	if in.RpmMaxInFlight != nil {
+		p.RpmMaxInFlight = *in.RpmMaxInFlight
+	}
+	if in.RpmMaxTokens != nil {
+		p.RpmMaxTokens = *in.RpmMaxTokens
+	}
+	if in.RpmLimitThreshold != nil {
+		p.RpmLimitThreshold = float64(*in.RpmLimitThreshold)
+	}
+	if in.RpmBinarySteps != nil {
+		p.RpmBinarySteps = *in.RpmBinarySteps
+	}
+	if in.TpmStartRate != nil {
+		p.TpmStartRate = float64(*in.TpmStartRate)
+	}
+	if in.TpmMaxRate != nil {
+		p.TpmMaxRate = float64(*in.TpmMaxRate)
+	}
+	if in.TpmStageSec != nil {
+		p.TpmStageSec = *in.TpmStageSec
+	}
+	if in.TpmMaxInFlight != nil {
+		p.TpmMaxInFlight = *in.TpmMaxInFlight
+	}
+	if in.TpmMaxTokensPerReq != nil {
+		p.TpmMaxTokensPerReq = *in.TpmMaxTokensPerReq
+	}
+	if in.TpmLimitThreshold != nil {
+		p.TpmLimitThreshold = float64(*in.TpmLimitThreshold)
+	}
+	if in.TpmBinarySteps != nil {
+		p.TpmBinarySteps = *in.TpmBinarySteps
 	}
 	if in.MaxTotalRequests != nil {
 		p.MaxTotalRequests = *in.MaxTotalRequests

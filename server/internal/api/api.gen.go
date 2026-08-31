@@ -660,16 +660,43 @@ type StabilityExport struct {
 
 // StabilityMetrics 一个（probe×档位）的指标集
 type StabilityMetrics struct {
+	// AchievedRate 开环档实际达成到达率（req/s，在途封顶会低于目标）
+	AchievedRate *float32 `json:"achievedRate,omitempty"`
+
+	// AchievedTokenRate TPM 开环档实测 token 吞吐（token/s，输入+输出都计）
+	AchievedTokenRate *float32 `json:"achievedTokenRate,omitempty"`
+
 	// ByErrorClass 各错误分类计数
 	ByErrorClass *map[string]int `json:"byErrorClass,omitempty"`
 
 	// Concurrency 阶梯并发档的并发数（其它 probe 缺省）
-	Concurrency *int    `json:"concurrency,omitempty"`
-	ErrorRate   float32 `json:"errorRate"`
-	Errors      int     `json:"errors"`
+	Concurrency *int `json:"concurrency,omitempty"`
+
+	// ConvergedRpm __overall__ RPM 收敛的可持续边界（请求/分钟）
+	ConvergedRpm *float32 `json:"convergedRpm,omitempty"`
+
+	// ConvergedTpm __overall__ TPM 收敛的可持续边界（token/分钟）
+	ConvergedTpm *float32 `json:"convergedTpm,omitempty"`
+	ErrorRate    float32  `json:"errorRate"`
+	Errors       int      `json:"errors"`
+
+	// RateLimitHeaders 最近一次响应携带的限速头快照（x-ratelimit-*/anthropic-ratelimit-*/retry-after）
+	RateLimitHeaders *map[string]string `json:"rateLimitHeaders,omitempty"`
+
+	// RateLimited 开环档 429 占比是否判定为触发限速
+	RateLimited *bool `json:"rateLimited,omitempty"`
+
+	// ReachedCap __overall__ 探到速率护栏顶仍未限速（真实边界≥护栏）
+	ReachedCap *bool `json:"reachedCap,omitempty"`
 
 	// Requests 计入统计的请求数（已剔除预热）
 	Requests int `json:"requests"`
+
+	// TargetRate 开环档目标到达率（req/s）
+	TargetRate *float32 `json:"targetRate,omitempty"`
+
+	// TargetTokenRate TPM 开环档目标 token 到达率（token/s）
+	TargetTokenRate *float32 `json:"targetTokenRate,omitempty"`
 
 	// ThroughputRps 达成吞吐（请求/秒，按样本时间窗计）
 	ThroughputRps *float32 `json:"throughputRps,omitempty"`
@@ -823,6 +850,48 @@ type StabilityTaskParams struct {
 
 	// RequestsPerStage 每档计入统计的请求数
 	RequestsPerStage *int `json:"requestsPerStage,omitempty"`
+
+	// RpmBinarySteps 找到限速档后二分细化真实边界的步数
+	RpmBinarySteps *int `json:"rpmBinarySteps,omitempty"`
+
+	// RpmLimitThreshold 判定某档触发限速的 429 占比阈值（0-1）
+	RpmLimitThreshold *float32 `json:"rpmLimitThreshold,omitempty"`
+
+	// RpmMaxInFlight RPM 在途请求上限（防雪崩兜底）
+	RpmMaxInFlight *int `json:"rpmMaxInFlight,omitempty"`
+
+	// RpmMaxRate RPM 探测速率护栏上限（req/s）；升到此仍不限速则报「边界≥上限」
+	RpmMaxRate *float32 `json:"rpmMaxRate,omitempty"`
+
+	// RpmMaxTokens RPM 每请求生成上限（只关心请求速率，取小）
+	RpmMaxTokens *int `json:"rpmMaxTokens,omitempty"`
+
+	// RpmStageSec RPM 每档发压时长（秒）
+	RpmStageSec *int `json:"rpmStageSec,omitempty"`
+
+	// RpmStartRate RPM 实测起始到达率（req/s，开环）
+	RpmStartRate *float32 `json:"rpmStartRate,omitempty"`
+
+	// TpmBinarySteps 找到限速档后二分细化真实 token 速率边界的步数
+	TpmBinarySteps *int `json:"tpmBinarySteps,omitempty"`
+
+	// TpmLimitThreshold 判定某档触发限速的 429 占比阈值（0-1）
+	TpmLimitThreshold *float32 `json:"tpmLimitThreshold,omitempty"`
+
+	// TpmMaxInFlight TPM 在途请求上限（防雪崩兜底）
+	TpmMaxInFlight *int `json:"tpmMaxInFlight,omitempty"`
+
+	// TpmMaxRate TPM 探测 token 速率护栏上限（token/s）；升到此仍不限速则报「边界≥上限」
+	TpmMaxRate *float32 `json:"tpmMaxRate,omitempty"`
+
+	// TpmMaxTokensPerReq TPM 每请求 max_tokens 砝码（顶格数数 prompt 保证打满输出；输入+输出都计）
+	TpmMaxTokensPerReq *int `json:"tpmMaxTokensPerReq,omitempty"`
+
+	// TpmStageSec TPM 每档发压时长（秒）
+	TpmStageSec *int `json:"tpmStageSec,omitempty"`
+
+	// TpmStartRate TPM 实测起始 token 到达率（token/s，开环；换算请求速率发压）
+	TpmStartRate *float32 `json:"tpmStartRate,omitempty"`
 
 	// WarmupPerStage 每档预热请求数（评估时剔除，不计入指标）；缺省 0（不预热）
 	WarmupPerStage *int `json:"warmupPerStage,omitempty"`

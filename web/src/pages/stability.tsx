@@ -63,6 +63,41 @@ function parseLadder(text: string): number[] {
     .filter((n) => Number.isInteger(n) && n >= 1 && n <= 512)
 }
 
+// rampRates 几何倍增到达率序列（含上限档），对齐后端 rpm_probe 的爬坡口径
+function rampRates(start: number, max: number): number[] {
+  if (start <= 0 || max <= 0) return max > 0 ? [max] : []
+  const out: number[] = []
+  for (let r = start; r < max; r *= 2) out.push(r)
+  out.push(max)
+  return out
+}
+
+// estRpmRequests 复刻后端最坏预估：Σ 爬坡各档 + 二分步数 × 上限档；每档 ⌈rate×sec⌉+1
+function estRpmRequests(start: number, max: number, stageSec: number, binarySteps: number): number {
+  if (start <= 0 || stageSec <= 0) return 0
+  const perStage = (rate: number) => Math.ceil(rate * stageSec) + 1
+  const ramp = rampRates(start, max).reduce((sum, r) => sum + perStage(r), 0)
+  return ramp + binarySteps * perStage(max)
+}
+
+// TPM_INPUT_TOKENS_EST 每请求名义输入 token（换算「token 速率 → 请求速率」用），对齐后端 tpmInputTokensEst
+const TPM_INPUT_TOKENS_EST = 16
+
+// estTpmRequests 复刻后端 TPM 最坏预估：token 速率各档按 reqRate=tokenRate/权重 换算请求速率后 ⌈reqRate×sec⌉+1 求和
+function estTpmRequests(
+  start: number,
+  max: number,
+  stageSec: number,
+  binarySteps: number,
+  maxTokensPerReq: number,
+): number {
+  if (start <= 0 || stageSec <= 0) return 0
+  const weight = TPM_INPUT_TOKENS_EST + (maxTokensPerReq > 0 ? maxTokensPerReq : 1)
+  const perStage = (tokenRate: number) => Math.ceil((tokenRate / weight) * stageSec) + 1
+  const ramp = rampRates(start, max).reduce((sum, r) => sum + perStage(r), 0)
+  return ramp + binarySteps * perStage(max)
+}
+
 export default function StabilityPage() {
   const { t } = useI18n()
   const navigate = useNavigate()
@@ -78,6 +113,22 @@ export default function StabilityPage() {
   const [requestsPerStage, setRequestsPerStage] = useState('20')
   const [warmupPerStage, setWarmupPerStage] = useState('2')
   const [ladderMaxTokens, setLadderMaxTokens] = useState('64')
+  // RPM 实测参数（开环恒定到达率爬坡 + 二分收敛）
+  const [rpmStartRate, setRpmStartRate] = useState('2')
+  const [rpmMaxRate, setRpmMaxRate] = useState('20')
+  const [rpmStageSec, setRpmStageSec] = useState('10')
+  const [rpmMaxInFlight, setRpmMaxInFlight] = useState('128')
+  const [rpmMaxTokens, setRpmMaxTokens] = useState('16')
+  const [rpmLimitThreshold, setRpmLimitThreshold] = useState('0.1')
+  const [rpmBinarySteps, setRpmBinarySteps] = useState('4')
+  // TPM 实测参数（开环恒定 token 到达率爬坡 + 二分收敛；输入+输出都计）
+  const [tpmStartRate, setTpmStartRate] = useState('200')
+  const [tpmMaxRate, setTpmMaxRate] = useState('2000')
+  const [tpmStageSec, setTpmStageSec] = useState('10')
+  const [tpmMaxInFlight, setTpmMaxInFlight] = useState('128')
+  const [tpmMaxTokensPerReq, setTpmMaxTokensPerReq] = useState('256')
+  const [tpmLimitThreshold, setTpmLimitThreshold] = useState('0.1')
+  const [tpmBinarySteps, setTpmBinarySteps] = useState('4')
   const [maxTotalRequests, setMaxTotalRequests] = useState('2000')
   const [maxTotalTokens, setMaxTotalTokens] = useState('2000000')
   const [requestTimeoutMs, setRequestTimeoutMs] = useState('60000')
@@ -151,21 +202,53 @@ export default function StabilityPage() {
   const rps = Number(requestsPerStage) || 0
   const warmup = Number(warmupPerStage) || 0
   const maxTok = Number(ladderMaxTokens) || 0
+  const rpmStart = Number(rpmStartRate) || 0
+  const rpmMax = Number(rpmMaxRate) || 0
+  const rpmSec = Number(rpmStageSec) || 0
+  const rpmInFlight = Number(rpmMaxInFlight) || 0
+  const rpmMaxTok = Number(rpmMaxTokens) || 0
+  const rpmThreshold = Number(rpmLimitThreshold) || 0
+  const rpmSteps = Number(rpmBinarySteps) || 0
+  const tpmStart = Number(tpmStartRate) || 0
+  const tpmMax = Number(tpmMaxRate) || 0
+  const tpmSec = Number(tpmStageSec) || 0
+  const tpmInFlight = Number(tpmMaxInFlight) || 0
+  const tpmMaxTok = Number(tpmMaxTokensPerReq) || 0
+  const tpmThreshold = Number(tpmLimitThreshold) || 0
+  const tpmSteps = Number(tpmBinarySteps) || 0
   const totalReqCap = Number(maxTotalRequests) || 0
   const totalTokCap = Number(maxTotalTokens) || 0
+  const rpmChecked = checked.includes('rpm_probe')
+  const tpmChecked = checked.includes('tpm_probe')
 
   // 最坏预估请求数：各 probe 按实选参数求和，再被总请求硬闸钳制。
-  // concurrency_ladder 有精确公式；其它 probe（Phase 2/3）暂用服务端默认估算兜底。
-  const estPerProbe = (p: StabilityProbeInfo): number =>
-    p.id === 'concurrency_ladder' ? ladderNums.length * (rps + warmup) : p.estRequests
+  // 三 probe 都有精确公式（阶梯 / RPM 爬坡+二分 / TPM token 速率爬坡+二分）。
+  const estPerProbe = (p: StabilityProbeInfo): number => {
+    if (p.id === 'concurrency_ladder') return ladderNums.length * (rps + warmup)
+    if (p.id === 'rpm_probe') return estRpmRequests(rpmStart, rpmMax, rpmSec, rpmSteps)
+    if (p.id === 'tpm_probe') return estTpmRequests(tpmStart, tpmMax, tpmSec, tpmSteps, tpmMaxTok)
+    return p.estRequests
+  }
+  // 各 probe 每请求生成上限不同（阶梯/RPM/TPM 各自 max_tokens），token 估算按 probe 加权
+  const maxTokForProbe = (p: StabilityProbeInfo): number => {
+    if (p.id === 'rpm_probe') return rpmMaxTok
+    if (p.id === 'tpm_probe') return tpmMaxTok
+    return maxTok
+  }
   const estRequestsRaw = checkedProbes.reduce((sum, p) => sum + estPerProbe(p), 0)
   const estRequests = Math.min(estRequestsRaw, totalReqCap || estRequestsRaw)
-  // 预估费用上界：只算输出侧（阶梯顶格 prompt 输入极小），token 上界受总 token 硬闸钳制
-  const estTokens = Math.min(estRequests * maxTok, totalTokCap || estRequests * maxTok)
+  // 预估费用上界：只算输出侧（顶格 prompt 输入极小），各 probe 按自身 max_tokens 加权后受总 token 硬闸钳制
+  const estTokensRaw = checkedProbes.reduce((sum, p) => sum + estPerProbe(p) * maxTokForProbe(p), 0)
+  const estTokens = Math.min(estTokensRaw, totalTokCap || estTokensRaw)
   const estCost =
     model?.outputPrice != null ? (estTokens * model.outputPrice) / 1_000_000 : null
 
-  const paramsValid = ladderNums.length > 0 && rps >= 1 && maxTok >= 1
+  const paramsValid =
+    ladderNums.length > 0 &&
+    rps >= 1 &&
+    maxTok >= 1 &&
+    (!rpmChecked || (rpmStart >= 0.1 && rpmMax >= rpmStart && rpmSec >= 1 && rpmMaxTok >= 1)) &&
+    (!tpmChecked || (tpmStart >= 1 && tpmMax >= tpmStart && tpmSec >= 1 && tpmMaxTok >= 1))
 
   const submit = () => {
     create.mutate({
@@ -178,6 +261,20 @@ export default function StabilityPage() {
         requestsPerStage: rps,
         warmupPerStage: warmup,
         ladderMaxTokens: maxTok,
+        rpmStartRate: rpmStart,
+        rpmMaxRate: rpmMax,
+        rpmStageSec: rpmSec,
+        rpmMaxInFlight: rpmInFlight,
+        rpmMaxTokens: rpmMaxTok,
+        rpmLimitThreshold: rpmThreshold,
+        rpmBinarySteps: rpmSteps,
+        tpmStartRate: tpmStart,
+        tpmMaxRate: tpmMax,
+        tpmStageSec: tpmSec,
+        tpmMaxInFlight: tpmInFlight,
+        tpmMaxTokensPerReq: tpmMaxTok,
+        tpmLimitThreshold: tpmThreshold,
+        tpmBinarySteps: tpmSteps,
         maxTotalRequests: totalReqCap,
         maxTotalTokens: totalTokCap,
         requestTimeoutMs: Number(requestTimeoutMs) || 60000,
@@ -379,6 +476,180 @@ export default function StabilityPage() {
                     onChange={(e) => setLadderMaxTokens(e.target.value)}
                   />
                 </div>
+                {rpmChecked && (
+                  <>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-rpm-start">{t('stab.rpmStartRate')}</Label>
+                      <Input
+                        id="s-rpm-start"
+                        type="number"
+                        min={0.1}
+                        step={0.1}
+                        className="w-36"
+                        value={rpmStartRate}
+                        onChange={(e) => setRpmStartRate(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-rpm-max">{t('stab.rpmMaxRate')}</Label>
+                      <Input
+                        id="s-rpm-max"
+                        type="number"
+                        min={0.1}
+                        step={0.1}
+                        className="w-36"
+                        value={rpmMaxRate}
+                        onChange={(e) => setRpmMaxRate(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-rpm-sec">{t('stab.rpmStageSec')}</Label>
+                      <Input
+                        id="s-rpm-sec"
+                        type="number"
+                        min={1}
+                        max={300}
+                        className="w-36"
+                        value={rpmStageSec}
+                        onChange={(e) => setRpmStageSec(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-rpm-inflight">{t('stab.rpmMaxInFlight')}</Label>
+                      <Input
+                        id="s-rpm-inflight"
+                        type="number"
+                        min={1}
+                        className="w-36"
+                        value={rpmMaxInFlight}
+                        onChange={(e) => setRpmMaxInFlight(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-rpm-maxtok">{t('stab.rpmMaxTokens')}</Label>
+                      <Input
+                        id="s-rpm-maxtok"
+                        type="number"
+                        min={1}
+                        max={4096}
+                        className="w-36"
+                        value={rpmMaxTokens}
+                        onChange={(e) => setRpmMaxTokens(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-rpm-threshold">{t('stab.rpmLimitThreshold')}</Label>
+                      <Input
+                        id="s-rpm-threshold"
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        className="w-36"
+                        value={rpmLimitThreshold}
+                        onChange={(e) => setRpmLimitThreshold(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-rpm-steps">{t('stab.rpmBinarySteps')}</Label>
+                      <Input
+                        id="s-rpm-steps"
+                        type="number"
+                        min={0}
+                        max={12}
+                        className="w-36"
+                        value={rpmBinarySteps}
+                        onChange={(e) => setRpmBinarySteps(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
+                {tpmChecked && (
+                  <>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-tpm-start">{t('stab.tpmStartRate')}</Label>
+                      <Input
+                        id="s-tpm-start"
+                        type="number"
+                        min={1}
+                        className="w-36"
+                        value={tpmStartRate}
+                        onChange={(e) => setTpmStartRate(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-tpm-max">{t('stab.tpmMaxRate')}</Label>
+                      <Input
+                        id="s-tpm-max"
+                        type="number"
+                        min={1}
+                        className="w-36"
+                        value={tpmMaxRate}
+                        onChange={(e) => setTpmMaxRate(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-tpm-sec">{t('stab.tpmStageSec')}</Label>
+                      <Input
+                        id="s-tpm-sec"
+                        type="number"
+                        min={1}
+                        max={300}
+                        className="w-36"
+                        value={tpmStageSec}
+                        onChange={(e) => setTpmStageSec(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-tpm-inflight">{t('stab.tpmMaxInFlight')}</Label>
+                      <Input
+                        id="s-tpm-inflight"
+                        type="number"
+                        min={1}
+                        className="w-36"
+                        value={tpmMaxInFlight}
+                        onChange={(e) => setTpmMaxInFlight(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-tpm-maxtok">{t('stab.tpmMaxTokensPerReq')}</Label>
+                      <Input
+                        id="s-tpm-maxtok"
+                        type="number"
+                        min={1}
+                        max={8192}
+                        className="w-36"
+                        value={tpmMaxTokensPerReq}
+                        onChange={(e) => setTpmMaxTokensPerReq(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-tpm-threshold">{t('stab.tpmLimitThreshold')}</Label>
+                      <Input
+                        id="s-tpm-threshold"
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        className="w-36"
+                        value={tpmLimitThreshold}
+                        onChange={(e) => setTpmLimitThreshold(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="s-tpm-steps">{t('stab.tpmBinarySteps')}</Label>
+                      <Input
+                        id="s-tpm-steps"
+                        type="number"
+                        min={0}
+                        max={12}
+                        className="w-36"
+                        value={tpmBinarySteps}
+                        onChange={(e) => setTpmBinarySteps(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
                 <div className="grid gap-2">
                   <Label htmlFor="s-maxreq">{t('stab.maxTotalRequests')}</Label>
                   <Input

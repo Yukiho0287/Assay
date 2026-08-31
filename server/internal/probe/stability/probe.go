@@ -112,6 +112,21 @@ type Metrics struct {
 
 	// Concurrency 阶梯并发档的并发数（其它 probe 留 0，omitempty）
 	Concurrency int `json:"concurrency,omitempty"`
+
+	// —— RPM/TPM 开环速率发现（阶梯并发 probe 留空）——
+	TargetRate   float64 `json:"targetRate,omitempty"`   // 档级：目标到达率 req/s
+	AchievedRate float64 `json:"achievedRate,omitempty"` // 档级：实际达成到达率 req/s（在途封顶会低于目标）
+	RateLimited  bool    `json:"rateLimited,omitempty"`  // 档级：本档 429 占比是否判定为触发限速
+	ConvergedRpm float64 `json:"convergedRpm,omitempty"` // __overall__：收敛的可持续 RPM 边界（req/min）
+	ReachedCap   bool    `json:"reachedCap,omitempty"`   // __overall__：探到速率护栏顶仍未限速（真实边界≥护栏）
+
+	// —— TPM 开环 token 速率发现（仅 tpm_probe）——
+	TargetTokenRate   float64 `json:"targetTokenRate,omitempty"`   // 档级：目标 token 到达率 token/s
+	AchievedTokenRate float64 `json:"achievedTokenRate,omitempty"` // 档级：实测 token 吞吐 token/s（输入+输出）
+	ConvergedTpm      float64 `json:"convergedTpm,omitempty"`      // __overall__：收敛的可持续 TPM 边界（token/min）
+
+	// RateLimitHeaders 最近一次响应携带的限速头快照（x-ratelimit-*/anthropic-ratelimit-*/retry-after）
+	RateLimitHeaders map[string]string `json:"rateLimitHeaders,omitempty"`
 }
 
 // StageMetrics 一档评估结果 + 定位信息，worker 据此落 stability_metrics。

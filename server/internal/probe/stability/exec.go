@@ -26,7 +26,7 @@ type outcome struct {
 	Total   time.Duration
 
 	Usage  protocol.Usage
-	Header http.Header // 非 2xx 时留存，供 RPM probe 解析限速头
+	Header http.Header // 所有响应都留存，供 RPM probe 读限速头（2xx 也带余量头）
 }
 
 // timingReader 包裹响应体，在首个非空 Read 打 TTFB 点，其余透传。
@@ -81,8 +81,8 @@ func doRequest(ctx context.Context, client *http.Client, codec protocol.Codec, b
 	defer resp.Body.Close()
 
 	o.HTTPStatus = resp.StatusCode
+	o.Header = resp.Header // 限速头在成功响应上也可能带余量（x-ratelimit-remaining-*）
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		o.Header = resp.Header
 		o.ErrorClass = classifyHTTP(resp.StatusCode)
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		msg := strings.TrimSpace(string(snippet))

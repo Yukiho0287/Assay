@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, FileJson, Loader2, RotateCcw, X } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router'
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
+import { CartesianGrid, Line, LineChart, ReferenceLine, XAxis, YAxis } from 'recharts'
 import { errText } from '@/components/channel-form-dialog'
 import { TaskStatusBadge } from '@/components/quality-badges'
 import { Badge } from '@/components/ui/badge'
@@ -305,12 +305,42 @@ function stageLabel(s: StabilityStageMetric): string {
   return s.metrics.concurrency != null ? String(s.metrics.concurrency) : s.stage
 }
 
+// ProbeSection 按 probe 类型分派：TPM（标记 targetTokenRate）与 RPM（标记 targetRate）走各自收敛视图，
+// 其余走阶梯视图。TPM 档同样带 targetRate（换算出的请求速率），故须先判 TPM 再判 RPM。
 function ProbeSection({
   name,
   stages,
   overall,
 }: {
   name: string
+  stages: StabilityStageMetric[]
+  overall?: StabilityStageMetric
+}) {
+  const isTpm =
+    overall?.metrics.convergedTpm != null || stages.some((s) => s.metrics.targetTokenRate != null)
+  const isRpm =
+    !isTpm &&
+    (overall?.metrics.convergedRpm != null || stages.some((s) => s.metrics.targetRate != null))
+  return (
+    <div className="grid gap-4">
+      <p className="text-sm font-medium">{name}</p>
+      {isTpm ? (
+        <TpmView stages={stages} overall={overall} />
+      ) : isRpm ? (
+        <RpmView stages={stages} overall={overall} />
+      ) : (
+        <LadderView stages={stages} overall={overall} />
+      )}
+      <ErrorClassBadges overall={overall} />
+    </div>
+  )
+}
+
+// 阶梯并发视图：TTFT 分位数折线（x=并发档）+ 分档指标表
+function LadderView({
+  stages,
+  overall,
+}: {
   stages: StabilityStageMetric[]
   overall?: StabilityStageMetric
 }) {
@@ -325,13 +355,9 @@ function ProbeSection({
       p95: s.metrics.ttftMs!.p95,
       p99: s.metrics.ttftMs!.p99,
     }))
-  const byErrorClass = overall?.metrics.byErrorClass ?? {}
-  const errorClasses = Object.entries(byErrorClass).filter(([, n]) => n > 0)
 
   return (
-    <div className="grid gap-4">
-      <p className="text-sm font-medium">{name}</p>
-
+    <>
       {chartData.length > 0 && (
         <div className="grid gap-2">
           <p className="text-xs text-muted-foreground">{t('stab.ladderChart')}</p>
@@ -390,17 +416,152 @@ function ProbeSection({
           </TableBody>
         </Table>
       </div>
+    </>
+  )
+}
 
-      {errorClasses.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">{t('stab.byErrorClass')}：</span>
-          {errorClasses.map(([cls, n]) => (
-            <Badge key={cls} variant="outline" className="font-normal">
-              {t(`errClass.${cls}` as DictKey)} · {n}
-            </Badge>
-          ))}
+// RPM 实测视图：错误率随目标到达率变化折线 + 收敛边界竖线，收敛 RPM 数字 + 限速头面板 + 分档表
+function RpmView({
+  stages,
+  overall,
+}: {
+  stages: StabilityStageMetric[]
+  overall?: StabilityStageMetric
+}) {
+  const { t } = useI18n()
+  const rpmConfig: ChartConfig = { errorRate: { label: t('stab.errorRate'), color: '#dc2626' } }
+
+  // 二分会回访爬坡区间内的速率 → 档序非速率序，按目标速率升序重排画曲线
+  const chartData = stages
+    .filter((s) => s.metrics.targetRate != null)
+    .map((s) => ({
+      rate: s.metrics.targetRate!,
+      errorRate: Math.round(s.metrics.errorRate * 1000) / 10, // 0..1 分数 → 百分比（一位小数）
+    }))
+    .sort((a, b) => a.rate - b.rate)
+
+  const convergedRpm = overall?.metrics.convergedRpm
+  const boundaryRps = convergedRpm != null ? convergedRpm / 60 : undefined
+  const reachedCap = overall?.metrics.reachedCap ?? false
+  const headerEntries = Object.entries(overall?.metrics.rateLimitHeaders ?? {})
+
+  const sortedStages = [...stages].sort(
+    (a, b) => (a.metrics.targetRate ?? 0) - (b.metrics.targetRate ?? 0),
+  )
+
+  return (
+    <>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-xs text-muted-foreground">{t('stab.convergedRpm')}</span>
+        <span className="text-lg font-semibold tabular-nums">
+          {convergedRpm != null ? Math.round(convergedRpm) : '—'}
+        </span>
+        {boundaryRps != null && (
+          <span className="text-xs text-muted-foreground">RPM ≈ {num(boundaryRps)} req/s</span>
+        )}
+        {reachedCap && (
+          <span className="text-xs text-amber-600 dark:text-amber-400">
+            · {t('stab.reachedCapNote')}
+          </span>
+        )}
+      </div>
+
+      {chartData.length > 0 && (
+        <div className="grid gap-2">
+          <p className="text-xs text-muted-foreground">{t('stab.rpmChart')}</p>
+          <ChartContainer config={rpmConfig} className="aspect-[3/1] w-full">
+            <LineChart data={chartData} margin={{ top: 12, right: 12, bottom: 4, left: 4 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                type="number"
+                dataKey="rate"
+                domain={[0, 'dataMax']}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                label={{ value: t('stab.targetRate'), position: 'insideBottom', offset: -2, fontSize: 11 }}
+              />
+              <YAxis width={44} tickLine={false} axisLine={false} tickMargin={4} unit="%" />
+              <ChartTooltip content={<ChartTooltipContent valueFormatter={(v) => `${v}%`} />} />
+              {boundaryRps != null && !reachedCap && (
+                <ReferenceLine
+                  x={boundaryRps}
+                  stroke="#16a34a"
+                  strokeDasharray="4 4"
+                  label={{
+                    value: `${Math.round(convergedRpm!)} RPM`,
+                    position: 'top',
+                    fontSize: 11,
+                    fill: '#16a34a',
+                  }}
+                />
+              )}
+              <Line
+                type="monotone"
+                dataKey="errorRate"
+                stroke="var(--color-errorRate)"
+                strokeWidth={2}
+                dot={{ r: 3 }}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ChartContainer>
         </div>
       )}
+
+      {headerEntries.length > 0 && (
+        <div className="grid gap-1.5">
+          <p className="text-xs text-muted-foreground">{t('stab.rateLimitHeaders')}</p>
+          <div className="flex flex-wrap gap-2">
+            {headerEntries.map(([k, v]) => (
+              <Badge key={k} variant="outline" className="font-mono text-xs font-normal">
+                {k}: {v}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-2">
+        <p className="text-xs text-muted-foreground">{t('stab.stageTable')}</p>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('stab.targetRate')}</TableHead>
+              <TableHead className="text-right">{t('stab.achievedRate')}</TableHead>
+              <TableHead className="text-right">{t('stab.requests')}</TableHead>
+              <TableHead className="text-right">{t('stab.errorRate')}</TableHead>
+              <TableHead className="text-center">{t('stab.rateLimited')}</TableHead>
+              <TableHead className="text-right">{t('stab.ttft')} p50</TableHead>
+              <TableHead className="text-right">p95</TableHead>
+              <TableHead className="text-right">p99</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sortedStages.map((s) => (
+              <RpmRow key={s.stage} label={num(s.metrics.targetRate)} m={s.metrics} />
+            ))}
+            {overall && <RpmRow key="__overall__" label={t('stab.overall')} m={overall.metrics} bold />}
+          </TableBody>
+        </Table>
+      </div>
+    </>
+  )
+}
+
+// ErrorClassBadges 错误分类徽章：两类视图共用（源自 __overall__ 的 byErrorClass）
+function ErrorClassBadges({ overall }: { overall?: StabilityStageMetric }) {
+  const { t } = useI18n()
+  const errorClasses = Object.entries(overall?.metrics.byErrorClass ?? {}).filter(([, n]) => n > 0)
+  if (errorClasses.length === 0) return null
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-muted-foreground">{t('stab.byErrorClass')}：</span>
+      {errorClasses.map(([cls, n]) => (
+        <Badge key={cls} variant="outline" className="font-normal">
+          {t(`errClass.${cls}` as DictKey)} · {n}
+        </Badge>
+      ))}
     </div>
   )
 }
@@ -413,6 +574,189 @@ function MetricRow({ label, m, bold }: { label: string; m: StabilityMetrics; bol
       <TableCell className="text-right tabular-nums">{pct(m.errorRate)}</TableCell>
       <TableCell className="text-right tabular-nums">{num(m.throughputRps)}</TableCell>
       <TableCell className="text-right tabular-nums">{num(m.tokensPerSec)}</TableCell>
+      <TableCell className="text-right tabular-nums">{ms(m.ttftMs?.p50)}</TableCell>
+      <TableCell className="text-right tabular-nums">{ms(m.ttftMs?.p95)}</TableCell>
+      <TableCell className="text-right tabular-nums">{ms(m.ttftMs?.p99)}</TableCell>
+    </TableRow>
+  )
+}
+
+// RpmRow 开环速率档行：目标/达成到达率 + 限速判定 + TTFT 分位数（__overall__ 无速率标注）
+function RpmRow({ label, m, bold }: { label: string; m: StabilityMetrics; bold?: boolean }) {
+  const { t } = useI18n()
+  return (
+    <TableRow className={bold ? 'font-medium' : undefined}>
+      <TableCell>{label}</TableCell>
+      <TableCell className="text-right tabular-nums">{num(m.achievedRate)}</TableCell>
+      <TableCell className="text-right tabular-nums">{m.requests}</TableCell>
+      <TableCell className="text-right tabular-nums">{pct(m.errorRate)}</TableCell>
+      <TableCell className="text-center">
+        {m.targetRate == null ? (
+          <span className="text-muted-foreground">—</span>
+        ) : m.rateLimited ? (
+          <Badge variant="outline" className="border-destructive/40 font-normal text-destructive">
+            {t('stab.limited')}
+          </Badge>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">{ms(m.ttftMs?.p50)}</TableCell>
+      <TableCell className="text-right tabular-nums">{ms(m.ttftMs?.p95)}</TableCell>
+      <TableCell className="text-right tabular-nums">{ms(m.ttftMs?.p99)}</TableCell>
+    </TableRow>
+  )
+}
+
+// TPM 实测视图：错误率随目标 token 到达率变化折线 + 收敛 TPM 边界竖线 + 实测 token 吞吐分档表
+function TpmView({
+  stages,
+  overall,
+}: {
+  stages: StabilityStageMetric[]
+  overall?: StabilityStageMetric
+}) {
+  const { t } = useI18n()
+  const tpmConfig: ChartConfig = { errorRate: { label: t('stab.errorRate'), color: '#dc2626' } }
+
+  // 二分会回访 token 速率区间 → 档序非速率序，按目标 token 速率升序重排画曲线
+  const chartData = stages
+    .filter((s) => s.metrics.targetTokenRate != null)
+    .map((s) => ({
+      rate: s.metrics.targetTokenRate!,
+      errorRate: Math.round(s.metrics.errorRate * 1000) / 10, // 0..1 分数 → 百分比（一位小数）
+    }))
+    .sort((a, b) => a.rate - b.rate)
+
+  const convergedTpm = overall?.metrics.convergedTpm
+  const boundaryTokenRate = convergedTpm != null ? convergedTpm / 60 : undefined
+  const reachedCap = overall?.metrics.reachedCap ?? false
+  const headerEntries = Object.entries(overall?.metrics.rateLimitHeaders ?? {})
+
+  const sortedStages = [...stages].sort(
+    (a, b) => (a.metrics.targetTokenRate ?? 0) - (b.metrics.targetTokenRate ?? 0),
+  )
+
+  return (
+    <>
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-xs text-muted-foreground">{t('stab.convergedTpm')}</span>
+        <span className="text-lg font-semibold tabular-nums">
+          {convergedTpm != null ? Math.round(convergedTpm) : '—'}
+        </span>
+        {boundaryTokenRate != null && (
+          <span className="text-xs text-muted-foreground">TPM ≈ {num(boundaryTokenRate)} token/s</span>
+        )}
+        {reachedCap && (
+          <span className="text-xs text-amber-600 dark:text-amber-400">
+            · {t('stab.reachedCapNote')}
+          </span>
+        )}
+      </div>
+
+      {chartData.length > 0 && (
+        <div className="grid gap-2">
+          <p className="text-xs text-muted-foreground">{t('stab.tpmChart')}</p>
+          <ChartContainer config={tpmConfig} className="aspect-[3/1] w-full">
+            <LineChart data={chartData} margin={{ top: 12, right: 12, bottom: 4, left: 4 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                type="number"
+                dataKey="rate"
+                domain={[0, 'dataMax']}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                label={{ value: t('stab.targetTokenRate'), position: 'insideBottom', offset: -2, fontSize: 11 }}
+              />
+              <YAxis width={44} tickLine={false} axisLine={false} tickMargin={4} unit="%" />
+              <ChartTooltip content={<ChartTooltipContent valueFormatter={(v) => `${v}%`} />} />
+              {boundaryTokenRate != null && !reachedCap && (
+                <ReferenceLine
+                  x={boundaryTokenRate}
+                  stroke="#16a34a"
+                  strokeDasharray="4 4"
+                  label={{
+                    value: `${Math.round(convergedTpm!)} TPM`,
+                    position: 'top',
+                    fontSize: 11,
+                    fill: '#16a34a',
+                  }}
+                />
+              )}
+              <Line
+                type="monotone"
+                dataKey="errorRate"
+                stroke="var(--color-errorRate)"
+                strokeWidth={2}
+                dot={{ r: 3 }}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ChartContainer>
+        </div>
+      )}
+
+      {headerEntries.length > 0 && (
+        <div className="grid gap-1.5">
+          <p className="text-xs text-muted-foreground">{t('stab.rateLimitHeaders')}</p>
+          <div className="flex flex-wrap gap-2">
+            {headerEntries.map(([k, v]) => (
+              <Badge key={k} variant="outline" className="font-mono text-xs font-normal">
+                {k}: {v}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-2">
+        <p className="text-xs text-muted-foreground">{t('stab.stageTable')}</p>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('stab.targetTokenRate')}</TableHead>
+              <TableHead className="text-right">{t('stab.achievedTokenRate')}</TableHead>
+              <TableHead className="text-right">{t('stab.requests')}</TableHead>
+              <TableHead className="text-right">{t('stab.errorRate')}</TableHead>
+              <TableHead className="text-center">{t('stab.rateLimited')}</TableHead>
+              <TableHead className="text-right">{t('stab.ttft')} p50</TableHead>
+              <TableHead className="text-right">p95</TableHead>
+              <TableHead className="text-right">p99</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sortedStages.map((s) => (
+              <TpmRow key={s.stage} label={num(s.metrics.targetTokenRate)} m={s.metrics} />
+            ))}
+            {overall && <TpmRow key="__overall__" label={t('stab.overall')} m={overall.metrics} bold />}
+          </TableBody>
+        </Table>
+      </div>
+    </>
+  )
+}
+
+// TpmRow 开环 token 速率档行：目标/达成 token 到达率 + 限速判定 + TTFT 分位数（__overall__ 无速率标注）
+function TpmRow({ label, m, bold }: { label: string; m: StabilityMetrics; bold?: boolean }) {
+  const { t } = useI18n()
+  return (
+    <TableRow className={bold ? 'font-medium' : undefined}>
+      <TableCell>{label}</TableCell>
+      <TableCell className="text-right tabular-nums">{num(m.achievedTokenRate)}</TableCell>
+      <TableCell className="text-right tabular-nums">{m.requests}</TableCell>
+      <TableCell className="text-right tabular-nums">{pct(m.errorRate)}</TableCell>
+      <TableCell className="text-center">
+        {m.targetTokenRate == null ? (
+          <span className="text-muted-foreground">—</span>
+        ) : m.rateLimited ? (
+          <Badge variant="outline" className="border-destructive/40 font-normal text-destructive">
+            {t('stab.limited')}
+          </Badge>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
       <TableCell className="text-right tabular-nums">{ms(m.ttftMs?.p50)}</TableCell>
       <TableCell className="text-right tabular-nums">{ms(m.ttftMs?.p95)}</TableCell>
       <TableCell className="text-right tabular-nums">{ms(m.ttftMs?.p99)}</TableCell>
@@ -457,11 +801,25 @@ function SnapshotCard({
       t('stab.maxTotalRequests'),
       `${p.maxTotalRequests} · ${t('stab.maxTotalTokens')} ${p.maxTotalTokens} · ${t('stab.requestTimeout')} ${p.requestTimeoutMs}`,
     ],
-    [
-      t('quality.createdAt'),
-      `${new Date(task.createdAt).toLocaleString()}${task.createdBy ? ` · ${task.createdBy}` : ''}`,
-    ],
   ]
+  // RPM 实测参数仅在勾选 rpm_probe 时定格展示
+  if (task.probes.includes('rpm_probe')) {
+    rows.push([
+      t('stab.rpmParams'),
+      `${p.rpmStartRate} → ${p.rpmMaxRate} req/s · ${t('stab.rpmStageSec')} ${p.rpmStageSec}s · ${t('stab.rpmMaxInFlight')} ${p.rpmMaxInFlight} · ${t('stab.rpmMaxTokens')} ${p.rpmMaxTokens} · ${t('stab.rpmLimitThreshold')} ${pct(p.rpmLimitThreshold)} · ${t('stab.rpmBinarySteps')} ${p.rpmBinarySteps}`,
+    ])
+  }
+  // TPM 实测参数仅在勾选 tpm_probe 时定格展示
+  if (task.probes.includes('tpm_probe')) {
+    rows.push([
+      t('stab.tpmParams'),
+      `${p.tpmStartRate} → ${p.tpmMaxRate} token/s · ${t('stab.tpmStageSec')} ${p.tpmStageSec}s · ${t('stab.tpmMaxInFlight')} ${p.tpmMaxInFlight} · ${t('stab.tpmMaxTokensPerReq')} ${p.tpmMaxTokensPerReq} · ${t('stab.tpmLimitThreshold')} ${pct(p.tpmLimitThreshold)} · ${t('stab.tpmBinarySteps')} ${p.tpmBinarySteps}`,
+    ])
+  }
+  rows.push([
+    t('quality.createdAt'),
+    `${new Date(task.createdAt).toLocaleString()}${task.createdBy ? ` · ${task.createdBy}` : ''}`,
+  ])
   if (startedAt) rows.push([t('quality.startedAt'), startedAt.toLocaleString()])
   if (finishedAt) {
     rows.push([

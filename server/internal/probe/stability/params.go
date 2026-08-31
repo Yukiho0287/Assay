@@ -20,6 +20,24 @@ type StabilityParams struct {
 	WarmupPerStage    int   `json:"warmupPerStage"`    // 每档预热请求数（评估剔除），默认 2
 	LadderMaxTokens   int   `json:"ladderMaxTokens"`   // 每请求生成上限，默认 64
 
+	// —— RPM 实测（开环，恒定到达率二分收敛速率边界）——
+	RpmStartRate      float64 `json:"rpmStartRate"`      // 起始到达率 req/s，默认 2
+	RpmMaxRate        float64 `json:"rpmMaxRate"`        // 探测速率护栏上限 req/s，默认 20
+	RpmStageSec       int     `json:"rpmStageSec"`       // 每档发压时长秒，默认 10
+	RpmMaxInFlight    int     `json:"rpmMaxInFlight"`    // 在途请求上限（防雪崩兜底），默认 128
+	RpmMaxTokens      int     `json:"rpmMaxTokens"`      // 每请求生成上限（RPM 只关心请求速率，取小），默认 16
+	RpmLimitThreshold float64 `json:"rpmLimitThreshold"` // 判定本档触发限速的 429 占比阈值，默认 0.1
+	RpmBinarySteps    int     `json:"rpmBinarySteps"`    // 找到限速档后二分细化步数，默认 4
+
+	// —— TPM 实测（开环，恒定 token 到达率二分收敛 token 速率边界；输入+输出都计）——
+	TpmStartRate       float64 `json:"tpmStartRate"`       // 起始 token 到达率 token/s，默认 200
+	TpmMaxRate         float64 `json:"tpmMaxRate"`         // 探测 token 速率护栏上限 token/s，默认 2000
+	TpmStageSec        int     `json:"tpmStageSec"`        // 每档发压时长秒，默认 10
+	TpmMaxInFlight     int     `json:"tpmMaxInFlight"`     // 在途请求上限（防雪崩兜底），默认 128
+	TpmMaxTokensPerReq int     `json:"tpmMaxTokensPerReq"` // 每请求 max_tokens 砝码（顶格 prompt 保证打满输出），默认 256
+	TpmLimitThreshold  float64 `json:"tpmLimitThreshold"`  // 判定本档触发限速的 429 占比阈值，默认 0.1
+	TpmBinarySteps     int     `json:"tpmBinarySteps"`     // 找到限速档后二分细化步数，默认 4
+
 	// —— 全局硬闸（成本护栏，碰任一即停）——
 	MaxTotalRequests int `json:"maxTotalRequests"` // 累计请求上限，默认 2000
 	MaxTotalTokens   int `json:"maxTotalTokens"`   // 累计 token 上限，默认 2_000_000
@@ -34,6 +52,22 @@ const (
 	DefaultMaxTotalRequests = 2000
 	DefaultMaxTotalTokens   = 2_000_000
 	DefaultRequestTimeoutMs = 60000
+
+	DefaultRpmStartRate      = 2.0
+	DefaultRpmMaxRate        = 20.0
+	DefaultRpmStageSec       = 10
+	DefaultRpmMaxInFlight    = 128
+	DefaultRpmMaxTokens      = 16
+	DefaultRpmLimitThreshold = 0.1
+	DefaultRpmBinarySteps    = 4
+
+	DefaultTpmStartRate       = 200.0
+	DefaultTpmMaxRate         = 2000.0
+	DefaultTpmStageSec        = 10
+	DefaultTpmMaxInFlight     = 128
+	DefaultTpmMaxTokensPerReq = 256
+	DefaultTpmLimitThreshold  = 0.1
+	DefaultTpmBinarySteps     = 4
 )
 
 // DefaultConcurrencyLadder 默认并发阶梯
@@ -49,6 +83,48 @@ func (p *StabilityParams) ApplyDefaults() {
 	}
 	if p.LadderMaxTokens == 0 {
 		p.LadderMaxTokens = DefaultLadderMaxTokens
+	}
+	if p.RpmStartRate == 0 {
+		p.RpmStartRate = DefaultRpmStartRate
+	}
+	if p.RpmMaxRate == 0 {
+		p.RpmMaxRate = DefaultRpmMaxRate
+	}
+	if p.RpmStageSec == 0 {
+		p.RpmStageSec = DefaultRpmStageSec
+	}
+	if p.RpmMaxInFlight == 0 {
+		p.RpmMaxInFlight = DefaultRpmMaxInFlight
+	}
+	if p.RpmMaxTokens == 0 {
+		p.RpmMaxTokens = DefaultRpmMaxTokens
+	}
+	if p.RpmLimitThreshold == 0 {
+		p.RpmLimitThreshold = DefaultRpmLimitThreshold
+	}
+	if p.RpmBinarySteps == 0 {
+		p.RpmBinarySteps = DefaultRpmBinarySteps
+	}
+	if p.TpmStartRate == 0 {
+		p.TpmStartRate = DefaultTpmStartRate
+	}
+	if p.TpmMaxRate == 0 {
+		p.TpmMaxRate = DefaultTpmMaxRate
+	}
+	if p.TpmStageSec == 0 {
+		p.TpmStageSec = DefaultTpmStageSec
+	}
+	if p.TpmMaxInFlight == 0 {
+		p.TpmMaxInFlight = DefaultTpmMaxInFlight
+	}
+	if p.TpmMaxTokensPerReq == 0 {
+		p.TpmMaxTokensPerReq = DefaultTpmMaxTokensPerReq
+	}
+	if p.TpmLimitThreshold == 0 {
+		p.TpmLimitThreshold = DefaultTpmLimitThreshold
+	}
+	if p.TpmBinarySteps == 0 {
+		p.TpmBinarySteps = DefaultTpmBinarySteps
 	}
 	if p.MaxTotalRequests == 0 {
 		p.MaxTotalRequests = DefaultMaxTotalRequests
@@ -82,6 +158,48 @@ func (p StabilityParams) Validate() error {
 	}
 	if p.LadderMaxTokens < 1 || p.LadderMaxTokens > 4096 {
 		return errors.New("生成上限需 1-4096")
+	}
+	if p.RpmStartRate <= 0 || p.RpmStartRate > 1000 {
+		return errors.New("RPM 起始速率需 0-1000 req/s")
+	}
+	if p.RpmMaxRate < p.RpmStartRate || p.RpmMaxRate > 1000 {
+		return errors.New("RPM 速率上限需 ≥ 起始速率且 ≤1000 req/s")
+	}
+	if p.RpmStageSec < 1 || p.RpmStageSec > 300 {
+		return errors.New("RPM 每档时长需 1-300s")
+	}
+	if p.RpmMaxInFlight < 1 || p.RpmMaxInFlight > 4096 {
+		return errors.New("RPM 在途上限需 1-4096")
+	}
+	if p.RpmMaxTokens < 1 || p.RpmMaxTokens > 4096 {
+		return errors.New("RPM 生成上限需 1-4096")
+	}
+	if p.RpmLimitThreshold <= 0 || p.RpmLimitThreshold > 1 {
+		return errors.New("RPM 限速阈值需 0-1（429 占比）")
+	}
+	if p.RpmBinarySteps < 0 || p.RpmBinarySteps > 12 {
+		return errors.New("RPM 二分步数需 0-12")
+	}
+	if p.TpmStartRate <= 0 || p.TpmStartRate > 1_000_000 {
+		return errors.New("TPM 起始 token 速率需 0-1000000 token/s")
+	}
+	if p.TpmMaxRate < p.TpmStartRate || p.TpmMaxRate > 1_000_000 {
+		return errors.New("TPM token 速率上限需 ≥ 起始速率且 ≤1000000 token/s")
+	}
+	if p.TpmStageSec < 1 || p.TpmStageSec > 300 {
+		return errors.New("TPM 每档时长需 1-300s")
+	}
+	if p.TpmMaxInFlight < 1 || p.TpmMaxInFlight > 4096 {
+		return errors.New("TPM 在途上限需 1-4096")
+	}
+	if p.TpmMaxTokensPerReq < 1 || p.TpmMaxTokensPerReq > 8192 {
+		return errors.New("TPM 每请求 max_tokens 需 1-8192")
+	}
+	if p.TpmLimitThreshold <= 0 || p.TpmLimitThreshold > 1 {
+		return errors.New("TPM 限速阈值需 0-1（429 占比）")
+	}
+	if p.TpmBinarySteps < 0 || p.TpmBinarySteps > 12 {
+		return errors.New("TPM 二分步数需 0-12")
 	}
 	if p.MaxTotalRequests < 1 {
 		return errors.New("总请求上限须为正")
