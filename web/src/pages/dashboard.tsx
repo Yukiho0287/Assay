@@ -6,8 +6,10 @@ import { ScoreText, TaskStatusBadge } from '@/components/quality-badges'
 import { Badge } from '@/components/ui/badge'
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -23,8 +25,10 @@ import {
   overviewApi,
   type ConnectivityHistoryPoint,
   type OverviewChannel,
+  type OverviewModelScore,
 } from '@/lib/api'
 import { type DictKey, useI18n } from '@/lib/i18n'
+import { cn } from '@/lib/utils'
 
 // 协议 → 曲线/图例配色（与协议 Badge 无关，仅 sparkline 专用）
 const protoStroke: Record<string, string> = {
@@ -111,14 +115,14 @@ function LatencySparkline({ points }: { points: ConnectivityHistoryPoint[] }) {
           )
         })}
       </svg>
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
         {[...byProto.entries()].map(([proto, list]) => {
           const latest = list[list.length - 1]
           return (
             <span key={proto} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className={`size-2 rounded-full ${protoDot[proto] ?? 'bg-muted-foreground'}`} />
+              <span className={`size-2 shrink-0 rounded-full ${protoDot[proto] ?? 'bg-muted-foreground'}`} />
               {t(`proto.${proto}` as DictKey)}
-              <span className="tabular-nums">
+              <span className="tabular-nums whitespace-nowrap">
                 {latest.ttftMs != null ? `${latest.ttftMs} ms` : '—'}
               </span>
             </span>
@@ -129,38 +133,30 @@ function LatencySparkline({ points }: { points: ConnectivityHistoryPoint[] }) {
   )
 }
 
-// ScoreBlock 质量得分区：卡片只展示一个模型（可切换），选择记入 localStorage
-function ScoreBlock({ channel }: { channel: OverviewChannel }) {
+// ScoreZone 质量得分格：只展示一个模型（可切换），选择由 ChannelCard 托管（footer 也要用）
+function ScoreZone({
+  models,
+  selected,
+  onSelect,
+}: {
+  models: OverviewModelScore[]
+  selected: OverviewModelScore | undefined
+  onSelect: (model: string) => void
+}) {
   const { t } = useI18n()
-  const storageKey = `assay.overview.model.${channel.id}`
-  const [stored, setStored] = useState<string | null>(() => localStorage.getItem(storageKey))
 
-  const models = channel.models
-  if (models.length === 0) {
+  if (!selected) {
     return <p className="text-xs text-muted-foreground">{t('dash.noModels')}</p>
   }
 
-  // 选中优先级：记忆 → 探活模型 → 第一个有分的 → 第一个
-  const selected =
-    models.find((m) => m.model === stored) ??
-    models.find((m) => m.modelEntryId != null && m.modelEntryId === channel.probeModelId) ??
-    models.find((m) => m.score != null) ??
-    models[0]
-
   return (
-    <div className="grid gap-2">
-      <div className="flex items-center justify-between gap-2">
+    <>
+      <div className="flex flex-wrap items-center gap-2">
         <ScoreText score={selected.score} grade={selected.grade} className="text-3xl" />
         {selected.taskStatus !== 'succeeded' && <TaskStatusBadge status={selected.taskStatus} />}
       </div>
-      {models.length > 1 && (
-        <Select
-          value={selected.model}
-          onValueChange={(v) => {
-            localStorage.setItem(storageKey, v)
-            setStored(v)
-          }}
-        >
+      {models.length > 1 ? (
+        <Select value={selected.model} onValueChange={onSelect}>
           <SelectTrigger size="sm" className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -172,24 +168,16 @@ function ScoreBlock({ channel }: { channel: OverviewChannel }) {
             ))}
           </SelectContent>
         </Select>
-      )}
-      {models.length === 1 && (
+      ) : (
         <p className="truncate text-xs text-muted-foreground" title={selected.model}>
           {selected.model}
         </p>
       )}
-      <p className="text-xs text-muted-foreground">
-        {t('dash.dataTime')}：
-        {selected.finishedAt ? new Date(selected.finishedAt).toLocaleString() : '—'}
-        <Link to={`/quality/${selected.taskId}`} className="ml-2 text-primary hover:underline">
-          {t('dash.viewTask')}
-        </Link>
-      </p>
-    </div>
+    </>
   )
 }
 
-// ChannelCard 渠道卡片：基本信息 + 延迟曲线 + 质量得分；每卡独立拉自己的连通历史
+// ChannelCard 渠道卡片：头部基本信息 / 中段左右分区（得分｜延迟）/ 底栏元信息
 function ChannelCard({ channel }: { channel: OverviewChannel }) {
   const { t } = useI18n()
   const navigate = useNavigate()
@@ -199,8 +187,19 @@ function ChannelCard({ channel }: { channel: OverviewChannel }) {
     refetchInterval: 60_000,
   })
 
+  // 选中模型状态提在卡片层：得分格与底栏共用同一个 selected
+  const storageKey = `assay.overview.model.${channel.id}`
+  const [stored, setStored] = useState<string | null>(() => localStorage.getItem(storageKey))
+  const models = channel.models
+  // 选中优先级：记忆 → 探活模型 → 第一个有分的 → 第一个
+  const selected =
+    models.find((m) => m.model === stored) ??
+    models.find((m) => m.modelEntryId != null && m.modelEntryId === channel.probeModelId) ??
+    models.find((m) => m.score != null) ??
+    models[0]
+
   return (
-    <Card className={channel.disabled ? 'opacity-60 saturate-50' : ''}>
+    <Card className={cn(channel.disabled && 'opacity-60 saturate-50')}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <button
@@ -217,25 +216,44 @@ function ChannelCard({ channel }: { channel: OverviewChannel }) {
         <CardDescription className="truncate" title={channel.baseUrl}>
           {channel.baseUrl}
         </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        <div className="flex flex-wrap gap-1">
+        <CardAction className="flex max-w-44 flex-wrap justify-end gap-1">
           {channel.protocols.map((p) => (
             <Badge key={p} variant="outline">
               {t(`proto.${p}` as DictKey)}
             </Badge>
           ))}
           <Badge variant="outline">{channel.currency}</Badge>
+        </CardAction>
+      </CardHeader>
+      {/* 中段两格分区：不画分隔线，区域感靠留白 + 小标题 */}
+      <CardContent className="grid flex-1 grid-cols-2 gap-4">
+        <div className="grid content-start gap-2">
+          <p className="text-xs font-medium text-muted-foreground">{t('dash.qualityTitle')}</p>
+          <ScoreZone
+            models={models}
+            selected={selected}
+            onSelect={(v) => {
+              localStorage.setItem(storageKey, v)
+              setStored(v)
+            }}
+          />
         </div>
-        <div className="grid gap-1.5">
+        <div className="grid content-start gap-2">
           <p className="text-xs font-medium text-muted-foreground">{t('dash.latencyTitle')}</p>
           <LatencySparkline points={history.data?.items ?? []} />
         </div>
-        <div className="grid gap-1.5">
-          <p className="text-xs font-medium text-muted-foreground">{t('dash.qualityTitle')}</p>
-          <ScoreBlock channel={channel} />
-        </div>
       </CardContent>
+      {selected && (
+        <CardFooter className="justify-between gap-2 text-xs text-muted-foreground">
+          <span>
+            {t('dash.dataTime')}：
+            {selected.finishedAt ? new Date(selected.finishedAt).toLocaleString() : '—'}
+          </span>
+          <Link to={`/quality/${selected.taskId}`} className="shrink-0 text-primary hover:underline">
+            {t('dash.viewTask')} →
+          </Link>
+        </CardFooter>
+      )}
     </Card>
   )
 }
