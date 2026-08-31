@@ -65,6 +65,37 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
+type StabilityMetric struct {
+	ID         int64
+	TaskID     uuid.UUID
+	Probe      string
+	Stage      string
+	StageIndex int32
+	Metrics    []byte
+	CreatedAt  time.Time
+}
+
+type StabilitySample struct {
+	ID           int64
+	TaskID       uuid.UUID
+	Probe        string
+	Stage        string
+	StageIndex   int32
+	Seq          int32
+	Protocol     string
+	DispatchedAt time.Time
+	TtfbMs       pgtype.Int4
+	TtftMs       pgtype.Int4
+	TotalMs      pgtype.Int4
+	Ok           bool
+	HttpStatus   pgtype.Int4
+	ErrorClass   *string
+	Error        *string
+	InputTokens  pgtype.Int4
+	OutputTokens pgtype.Int4
+	Warmup       bool
+}
+
 type Task struct {
 	ID            uuid.UUID
 	Kind          string

@@ -158,16 +158,31 @@ func (e TaskStatus) Valid() bool {
 
 // Defines values for ExportQualityTaskParamsFormat.
 const (
-	Json  ExportQualityTaskParamsFormat = "json"
-	Junit ExportQualityTaskParamsFormat = "junit"
+	ExportQualityTaskParamsFormatJson  ExportQualityTaskParamsFormat = "json"
+	ExportQualityTaskParamsFormatJunit ExportQualityTaskParamsFormat = "junit"
 )
 
 // Valid indicates whether the value is a known member of the ExportQualityTaskParamsFormat enum.
 func (e ExportQualityTaskParamsFormat) Valid() bool {
 	switch e {
-	case Json:
+	case ExportQualityTaskParamsFormatJson:
 		return true
-	case Junit:
+	case ExportQualityTaskParamsFormatJunit:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ExportStabilityTaskParamsFormat.
+const (
+	ExportStabilityTaskParamsFormatJson ExportStabilityTaskParamsFormat = "json"
+)
+
+// Valid indicates whether the value is a known member of the ExportStabilityTaskParamsFormat enum.
+func (e ExportStabilityTaskParamsFormat) Valid() bool {
+	switch e {
+	case ExportStabilityTaskParamsFormatJson:
 		return true
 	default:
 		return false
@@ -633,6 +648,186 @@ type RoleUpdate struct {
 	Permissions *PermissionMap `json:"permissions,omitempty"`
 }
 
+// StabilityExport 证据链自足的 JSON 导出：任务快照 + 指标报告 + 全量逐请求样本
+type StabilityExport struct {
+	// Report 稳定性指标报告：档级 + overall 聚合，口径见 footnotes
+	Report  StabilityReport   `json:"report"`
+	Samples []StabilitySample `json:"samples"`
+	Task    StabilityTask     `json:"task"`
+	Tool    string            `json:"tool"`
+	Version string            `json:"version"`
+}
+
+// StabilityMetrics 一个（probe×档位）的指标集
+type StabilityMetrics struct {
+	// ByErrorClass 各错误分类计数
+	ByErrorClass *map[string]int `json:"byErrorClass,omitempty"`
+
+	// Concurrency 阶梯并发档的并发数（其它 probe 缺省）
+	Concurrency *int    `json:"concurrency,omitempty"`
+	ErrorRate   float32 `json:"errorRate"`
+	Errors      int     `json:"errors"`
+
+	// Requests 计入统计的请求数（已剔除预热）
+	Requests int `json:"requests"`
+
+	// ThroughputRps 达成吞吐（请求/秒，按样本时间窗计）
+	ThroughputRps *float32 `json:"throughputRps,omitempty"`
+
+	// TokensPerSec 输出 token 吞吐（token/秒）
+	TokensPerSec *float32 `json:"tokensPerSec,omitempty"`
+
+	// TotalMs 一组延迟观测的分位数摘要（评估期确定性计算，单位毫秒）
+	TotalMs *StabilityPercentiles `json:"totalMs,omitempty"`
+
+	// TtfbMs 一组延迟观测的分位数摘要（评估期确定性计算，单位毫秒）
+	TtfbMs *StabilityPercentiles `json:"ttfbMs,omitempty"`
+
+	// TtftMs 一组延迟观测的分位数摘要（评估期确定性计算，单位毫秒）
+	TtftMs *StabilityPercentiles `json:"ttftMs,omitempty"`
+}
+
+// StabilityPercentiles 一组延迟观测的分位数摘要（评估期确定性计算，单位毫秒）
+type StabilityPercentiles struct {
+	Avg float32 `json:"avg"`
+	Max int     `json:"max"`
+	Min int     `json:"min"`
+	P50 int     `json:"p50"`
+	P95 int     `json:"p95"`
+	P99 int     `json:"p99"`
+}
+
+// StabilityProbeInfo 稳定性检测项元数据（产出性能指标，无评分检查点）
+type StabilityProbeInfo struct {
+	Description string `json:"description"`
+
+	// EstRequests 按默认参数的最坏预估请求数（前端据实选参数自行重算展示）
+	EstRequests int `json:"estRequests"`
+
+	// Id 检测项唯一标识（如 concurrency_ladder）
+	Id   string `json:"id"`
+	Name string `json:"name"`
+
+	// Protocols 适用协议（空=全适用，前端展示为三协议皆可）
+	Protocols []Protocol `json:"protocols"`
+}
+
+// StabilityReport 稳定性指标报告：档级 + overall 聚合，口径见 footnotes
+type StabilityReport struct {
+	// Footnotes 测量口径脚注（TTFT 起点、预热剔除、分位数算法等）
+	Footnotes   *[]string `json:"footnotes,omitempty"`
+	GeneratedAt time.Time `json:"generatedAt"`
+
+	// Incomplete 任务非正常结束（failed/canceled），指标仅基于已采集样本
+	Incomplete *bool `json:"incomplete,omitempty"`
+
+	// Protocol 渠道支持的接口协议
+	Protocol Protocol               `json:"protocol"`
+	Stages   []StabilityStageMetric `json:"stages"`
+	Status   TaskStatus             `json:"status"`
+	TaskId   openapi_types.UUID     `json:"taskId"`
+}
+
+// StabilitySample 一次压测请求的逐请求原始时序（证据链源；失败样本延迟/计量字段缺省）
+type StabilitySample struct {
+	DispatchedAt time.Time `json:"dispatchedAt"`
+	Error        *string   `json:"error,omitempty"`
+	ErrorClass   *string   `json:"errorClass,omitempty"`
+	HttpStatus   *int      `json:"httpStatus,omitempty"`
+	InputTokens  *int      `json:"inputTokens,omitempty"`
+	Ok           bool      `json:"ok"`
+	OutputTokens *int      `json:"outputTokens,omitempty"`
+	Probe        string    `json:"probe"`
+
+	// Protocol 渠道支持的接口协议
+	Protocol   Protocol `json:"protocol"`
+	Seq        int      `json:"seq"`
+	Stage      string   `json:"stage"`
+	StageIndex int      `json:"stageIndex"`
+	TotalMs    *int     `json:"totalMs,omitempty"`
+	TtfbMs     *int     `json:"ttfbMs,omitempty"`
+	TtftMs     *int     `json:"ttftMs,omitempty"`
+	Warmup     bool     `json:"warmup"`
+}
+
+// StabilityStageMetric 一档（或 __overall__ probe 级）的评估结果
+type StabilityStageMetric struct {
+	// Metrics 一个（probe×档位）的指标集
+	Metrics StabilityMetrics `json:"metrics"`
+	Probe   string           `json:"probe"`
+
+	// Stage 档位标识；__overall__ 为 probe 级汇总
+	Stage string `json:"stage"`
+
+	// StageIndex 档序号；__overall__ 为 -1
+	StageIndex int `json:"stageIndex"`
+}
+
+// StabilityTask defines model for StabilityTask.
+type StabilityTask struct {
+	CreatedAt  time.Time          `json:"createdAt"`
+	CreatedBy  *string            `json:"createdBy,omitempty"`
+	Error      *string            `json:"error,omitempty"`
+	FinishedAt *time.Time         `json:"finishedAt,omitempty"`
+	Id         openapi_types.UUID `json:"id"`
+
+	// Params 稳定性任务参数：实选协议 + 各 probe 档位 + 全局成本硬闸
+	Params        StabilityTaskParams `json:"params"`
+	Probes        []string            `json:"probes"`
+	ProgressDone  int                 `json:"progressDone"`
+	ProgressTotal int                 `json:"progressTotal"`
+	StartedAt     *time.Time          `json:"startedAt,omitempty"`
+	Status        TaskStatus          `json:"status"`
+
+	// Target 检测对象参数快照（任务创建时定格，不受渠道后续编辑/删除影响；绝不含 API key）
+	Target TaskTarget `json:"target"`
+}
+
+// StabilityTaskCreate defines model for StabilityTaskCreate.
+type StabilityTaskCreate struct {
+	ChannelId    openapi_types.UUID `json:"channelId"`
+	ModelEntryId openapi_types.UUID `json:"modelEntryId"`
+
+	// Params 稳定性任务参数：实选协议 + 各 probe 档位 + 全局成本硬闸
+	Params StabilityTaskParams `json:"params"`
+
+	// Probes 勾选的稳定性检测项 id 集合
+	Probes []string `json:"probes"`
+}
+
+// StabilityTaskList defines model for StabilityTaskList.
+type StabilityTaskList struct {
+	Items []StabilityTask `json:"items"`
+	Total int             `json:"total"`
+}
+
+// StabilityTaskParams 稳定性任务参数：实选协议 + 各 probe 档位 + 全局成本硬闸
+type StabilityTaskParams struct {
+	// ConcurrencyLadder 阶梯并发的并发档序列（闭环）
+	ConcurrencyLadder *[]int `json:"concurrencyLadder,omitempty"`
+
+	// LadderMaxTokens 每请求生成上限（max_tokens 砝码，控制单请求耗时与成本）
+	LadderMaxTokens *int `json:"ladderMaxTokens,omitempty"`
+
+	// MaxTotalRequests 全局请求硬闸；累计达到即收敛停止
+	MaxTotalRequests *int `json:"maxTotalRequests,omitempty"`
+
+	// MaxTotalTokens 全局 token 硬闸；累计达到即收敛停止
+	MaxTotalTokens *int `json:"maxTotalTokens,omitempty"`
+
+	// Protocol 渠道支持的接口协议
+	Protocol *Protocol `json:"protocol,omitempty"`
+
+	// RequestTimeoutMs 单请求超时（毫秒）
+	RequestTimeoutMs *int `json:"requestTimeoutMs,omitempty"`
+
+	// RequestsPerStage 每档计入统计的请求数
+	RequestsPerStage *int `json:"requestsPerStage,omitempty"`
+
+	// WarmupPerStage 每档预热请求数（评估时剔除，不计入指标）
+	WarmupPerStage *int `json:"warmupPerStage,omitempty"`
+}
+
 // TaskStatBucket defines model for TaskStatBucket.
 type TaskStatBucket struct {
 	// Collected 已采集·待评估行数（仅运行中非零）
@@ -768,6 +963,26 @@ type ListQualityTaskResultsParams struct {
 	Status *CaseStatus `form:"status,omitempty" json:"status,omitempty"`
 }
 
+// ListStabilityTasksParams defines parameters for ListStabilityTasks.
+type ListStabilityTasksParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// Status 按任务状态筛选；缺省不过滤
+	Status *TaskStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// ChannelId 按渠道筛选；缺省不过滤（渠道删除后其任务 channel_id 置空，仅在不过滤时可见）
+	ChannelId *openapi_types.UUID `form:"channelId,omitempty" json:"channelId,omitempty"`
+}
+
+// ExportStabilityTaskParams defines parameters for ExportStabilityTask.
+type ExportStabilityTaskParams struct {
+	Format ExportStabilityTaskParamsFormat `form:"format" json:"format"`
+}
+
+// ExportStabilityTaskParamsFormat defines parameters for ExportStabilityTask.
+type ExportStabilityTaskParamsFormat string
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
@@ -797,6 +1012,9 @@ type CreateRoleJSONRequestBody = RoleCreate
 
 // UpdateRoleJSONRequestBody defines body for UpdateRole for application/json ContentType.
 type UpdateRoleJSONRequestBody = RoleUpdate
+
+// CreateStabilityTaskJSONRequestBody defines body for CreateStabilityTask for application/json ContentType.
+type CreateStabilityTaskJSONRequestBody = StabilityTaskCreate
 
 // TriggerDeployJSONRequestBody defines body for TriggerDeploy for application/json ContentType.
 type TriggerDeployJSONRequestBody = DeployRequest
@@ -896,6 +1114,30 @@ type ServerInterface interface {
 	// UpdateRole 修改角色名或权限（需 users 权限；内置角色不可修改）
 	// (PATCH /roles/{id})
 	UpdateRole(w http.ResponseWriter, r *http.Request, id IdPath)
+	// ListStabilityProbes 稳定性检测项注册表（需 stability 权限；产出性能指标，无评分检查点）
+	// (GET /stability/probes)
+	ListStabilityProbes(w http.ResponseWriter, r *http.Request)
+	// ListStabilityTasks 稳定性检测任务历史（需 stability 权限；按创建时间倒序，可按状态/渠道筛选）
+	// (GET /stability/tasks)
+	ListStabilityTasks(w http.ResponseWriter, r *http.Request, params ListStabilityTasksParams)
+	// CreateStabilityTask 创建稳定性检测任务（需 stability 权限；创建时快照检测对象+协议，入队后由 worker 发压）
+	// (POST /stability/tasks)
+	CreateStabilityTask(w http.ResponseWriter, r *http.Request)
+	// GetStabilityTask 稳定性任务详情（需 stability 权限；含参数快照）
+	// (GET /stability/tasks/{id})
+	GetStabilityTask(w http.ResponseWriter, r *http.Request, id IdPath)
+	// CancelStabilityTask 取消稳定性任务（需 stability 权限；排队或运行中的任务可取消，运行中的中止在途请求）
+	// (POST /stability/tasks/{id}/cancel)
+	CancelStabilityTask(w http.ResponseWriter, r *http.Request, id IdPath)
+	// StreamStabilityTaskEvents 稳定性任务进度事件流（需 stability 权限；SSE，连接后先推当前快照，任务终态后关闭）
+	// (GET /stability/tasks/{id}/events)
+	StreamStabilityTaskEvents(w http.ResponseWriter, r *http.Request, id IdPath)
+	// ExportStabilityTask 导出稳定性报告（需 stability 权限；json=证据链自足报告，含全量逐请求样本；仅终态任务可用）
+	// (GET /stability/tasks/{id}/export)
+	ExportStabilityTask(w http.ResponseWriter, r *http.Request, id IdPath, params ExportStabilityTaskParams)
+	// GetStabilityTaskMetrics 稳定性指标报告（需 stability 权限；档级+overall 聚合，仅终态任务可用）
+	// (GET /stability/tasks/{id}/metrics)
+	GetStabilityTaskMetrics(w http.ResponseWriter, r *http.Request, id IdPath)
 	// GetUpdateStatus 检查在线更新（需 system 权限；查询 GitHub 最新 Release）
 	// (GET /system/update)
 	GetUpdateStatus(w http.ResponseWriter, r *http.Request)
@@ -1650,6 +1892,252 @@ func (siw *ServerInterfaceWrapper) UpdateRole(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListStabilityProbes operation middleware
+func (siw *ServerInterfaceWrapper) ListStabilityProbes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListStabilityProbes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListStabilityTasks operation middleware
+func (siw *ServerInterfaceWrapper) ListStabilityTasks(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListStabilityTasksParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "channelId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "channelId", r.URL.Query(), &params.ChannelId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "channelId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "channelId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListStabilityTasks(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateStabilityTask operation middleware
+func (siw *ServerInterfaceWrapper) CreateStabilityTask(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateStabilityTask(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetStabilityTask operation middleware
+func (siw *ServerInterfaceWrapper) GetStabilityTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStabilityTask(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CancelStabilityTask operation middleware
+func (siw *ServerInterfaceWrapper) CancelStabilityTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CancelStabilityTask(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StreamStabilityTaskEvents operation middleware
+func (siw *ServerInterfaceWrapper) StreamStabilityTaskEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StreamStabilityTaskEvents(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportStabilityTask operation middleware
+func (siw *ServerInterfaceWrapper) ExportStabilityTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ExportStabilityTaskParams
+
+	// ------------- Required query parameter "format" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "format", r.URL.Query(), &params.Format, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "format"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportStabilityTask(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetStabilityTaskMetrics operation middleware
+func (siw *ServerInterfaceWrapper) GetStabilityTaskMetrics(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStabilityTaskMetrics(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetUpdateStatus operation middleware
 func (siw *ServerInterfaceWrapper) GetUpdateStatus(w http.ResponseWriter, r *http.Request) {
 
@@ -1928,6 +2416,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks/{id}/export", wrapper.ExportQualityTask)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/quality/tasks/{id}/cancel", wrapper.CancelQualityTask)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks/{id}/events", wrapper.StreamQualityTaskEvents)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/stability/probes", wrapper.ListStabilityProbes)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/stability/tasks", wrapper.ListStabilityTasks)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/stability/tasks", wrapper.CreateStabilityTask)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/stability/tasks/{id}", wrapper.GetStabilityTask)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/stability/tasks/{id}/metrics", wrapper.GetStabilityTaskMetrics)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/stability/tasks/{id}/export", wrapper.ExportStabilityTask)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/stability/tasks/{id}/cancel", wrapper.CancelStabilityTask)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/stability/tasks/{id}/events", wrapper.StreamStabilityTaskEvents)
 
 	return m
 }
