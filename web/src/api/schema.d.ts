@@ -370,6 +370,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/quality/tasks/{id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 评分板（需 quality 权限；检查点加权评分，按当前注册表口径即时计算，仅终态任务可用） */
+        get: operations["getQualityTaskReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/quality/tasks/{id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 导出报告（需 quality 权限；json=证据链自足报告，junit=JUnit XML；仅终态任务可用） */
+        get: operations["exportQualityTask"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/quality/tasks/{id}/cancel": {
         parameters: {
             query?: never;
@@ -718,6 +752,56 @@ export interface components {
             /** @description 模型最终产出的工具参数原文（截断存储） */
             arguments?: string;
             attempts: number;
+        };
+        /** @description 一个评分检查点的聚合结果；得分 = passed/total × 100（rejected 与 violated 均计失败） */
+        CheckpointScore: {
+            /** @description 检查点稳定标识（检测项元数据声明） */
+            id: string;
+            name: string;
+            /** @description 同一检测项内的相对权重 */
+            weight: number;
+            total: number;
+            passed: number;
+            rejected: number;
+            violated: number;
+            /** @description 0-100；未采样（total=0，如被用例上限截掉）时缺省且不参与加权 */
+            score?: number;
+        };
+        ProbeScore: {
+            probeId: string;
+            /** @description 检测项中文名（快照自注册表；检测项已下架时回退为 id） */
+            probeName: string;
+            /** @description 检查点加权平均（0-100）；全部检查点未采样时缺省 */
+            score?: number;
+            checkpoints: components["schemas"]["CheckpointScore"][];
+        };
+        /** @description 评分板：按「检查点 + 权重」模型即时计算——检查点得分=命中用例通过占比，检测项得分=检查点加权平均，总分=各检测项等权平均。原始判定以用例级结果为准，评分是其视图。 */
+        QualityReport: {
+            /** Format: uuid */
+            taskId: string;
+            status: components["schemas"]["TaskStatus"];
+            /** @description 总分 0-100；无任何已采样检查点时缺省 */
+            score?: number;
+            /**
+             * @description 分级：A ≥95、B ≥80、C ≥60、D <60
+             * @enum {string}
+             */
+            grade?: "A" | "B" | "C" | "D";
+            /** @description 任务非正常结束（failed/canceled），评分仅基于已采集数据 */
+            incomplete?: boolean;
+            probes: components["schemas"]["ProbeScore"][];
+            /** Format: date-time */
+            generatedAt: string;
+        };
+        /** @description 证据链自足的 JSON 导出：任务快照 + 评分板 + 全量用例级结果，脱离平台可独立审计 */
+        QualityExport: {
+            /** @description 固定 "assay" */
+            tool: string;
+            /** @description 导出时服务端版本 */
+            version: string;
+            task: components["schemas"]["QualityTask"];
+            report: components["schemas"]["QualityReport"];
+            results: components["schemas"]["QualityCaseResult"][];
         };
         /** @description SSE data 帧载荷 */
         TaskProgressEvent: {
@@ -1632,6 +1716,77 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getQualityTaskReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 评分板 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityReport"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 任务尚未结束，暂无评分 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    exportQualityTask: {
+        parameters: {
+            query: {
+                format: "json" | "junit";
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 报告文件（Content-Disposition attachment） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QualityExport"];
+                    "application/xml": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 任务尚未结束，暂无报告 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     cancelQualityTask: {

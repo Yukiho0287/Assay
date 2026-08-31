@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Assay API
   description: LLM 渠道检测平台 API。本文件是前后端契约的唯一真相源（契约优先）。
-  version: 0.6.0
+  version: 0.7.0
 servers:
   - url: /api
 paths:
@@ -687,6 +687,67 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /quality/tasks/{id}/report:
+    get:
+      operationId: getQualityTaskReport
+      summary: 评分板（需 quality 权限；检查点加权评分，按当前注册表口径即时计算，仅终态任务可用）
+      tags: [quality]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: 评分板
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: 任务尚未结束，暂无评分
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /quality/tasks/{id}/export:
+    get:
+      operationId: exportQualityTask
+      summary: 导出报告（需 quality 权限；json=证据链自足报告，junit=JUnit XML；仅终态任务可用）
+      tags: [quality]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - name: format
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [json, junit]
+      responses:
+        "200":
+          description: 报告文件（Content-Disposition attachment）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QualityExport"
+            application/xml:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: 任务尚未结束，暂无报告
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /quality/tasks/{id}/cancel:
     post:
       operationId: cancelQualityTask
@@ -1351,6 +1412,92 @@ components:
           type: string
         attempts:
           type: integer
+    CheckpointScore:
+      description: 一个评分检查点的聚合结果；得分 = passed/total × 100（rejected 与 violated 均计失败）
+      type: object
+      required: [id, name, weight, total, passed, rejected, violated]
+      properties:
+        id:
+          description: 检查点稳定标识（检测项元数据声明）
+          type: string
+        name:
+          type: string
+        weight:
+          description: 同一检测项内的相对权重
+          type: number
+        total:
+          type: integer
+        passed:
+          type: integer
+        rejected:
+          type: integer
+        violated:
+          type: integer
+        score:
+          description: 0-100；未采样（total=0，如被用例上限截掉）时缺省且不参与加权
+          type: number
+    ProbeScore:
+      type: object
+      required: [probeId, probeName, checkpoints]
+      properties:
+        probeId:
+          type: string
+        probeName:
+          description: 检测项中文名（快照自注册表；检测项已下架时回退为 id）
+          type: string
+        score:
+          description: 检查点加权平均（0-100）；全部检查点未采样时缺省
+          type: number
+        checkpoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/CheckpointScore"
+    QualityReport:
+      description: 评分板：按「检查点 + 权重」模型即时计算——检查点得分=命中用例通过占比，检测项得分=检查点加权平均，总分=各检测项等权平均。原始判定以用例级结果为准，评分是其视图。
+      type: object
+      required: [taskId, status, probes, generatedAt]
+      properties:
+        taskId:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+        score:
+          description: 总分 0-100；无任何已采样检查点时缺省
+          type: number
+        grade:
+          description: 分级：A ≥95、B ≥80、C ≥60、D <60
+          type: string
+          enum: [A, B, C, D]
+        incomplete:
+          description: 任务非正常结束（failed/canceled），评分仅基于已采集数据
+          type: boolean
+        probes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProbeScore"
+        generatedAt:
+          type: string
+          format: date-time
+    QualityExport:
+      description: 证据链自足的 JSON 导出：任务快照 + 评分板 + 全量用例级结果，脱离平台可独立审计
+      type: object
+      required: [tool, version, task, report, results]
+      properties:
+        tool:
+          description: 固定 "assay"
+          type: string
+        version:
+          description: 导出时服务端版本
+          type: string
+        task:
+          $ref: "#/components/schemas/QualityTask"
+        report:
+          $ref: "#/components/schemas/QualityReport"
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/QualityCaseResult"
     TaskProgressEvent:
       description: SSE data 帧载荷
       type: object

@@ -47,6 +47,12 @@ func New() probe.Probe {
 			CaseCount:        caseCount,
 			RequestsPerCase:  2, // 非流式 + 流式
 			SupportsMaxCases: true,
+			// 17 个语料套件按文件分行太碎；流式（增量拼参数）与非流式是两条独立
+			// 实现路径，按模式分两个等权检查点最能定位问题在哪条路径
+			Checkpoints: []probe.Checkpoint{
+				{ID: "non_stream_compliance", Name: "非流式遵从", Weight: 1, Modes: []string{probe.ModeNonStream}},
+				{ID: "stream_compliance", Name: "流式遵从", Weight: 1, Modes: []string{probe.ModeStream}},
+			},
 		},
 		SlotCount: func(p probe.Params) int {
 			n := caseCount

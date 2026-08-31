@@ -32,6 +32,9 @@ export type CaseMode = components['schemas']['CaseMode']
 export type CostTier = components['schemas']['CostTier']
 export type TaskStatBucket = components['schemas']['TaskStatBucket']
 export type TaskProgressEvent = components['schemas']['TaskProgressEvent']
+export type QualityReport = components['schemas']['QualityReport']
+export type ProbeScore = components['schemas']['ProbeScore']
+export type CheckpointScore = components['schemas']['CheckpointScore']
 
 // 统一请求封装：非 2xx 抛出带后端 error 文案的异常
 export class RequestError extends Error {
@@ -138,6 +141,10 @@ export const qualityApi = {
     request<QualityCaseResult[]>(
       `/api/quality/tasks/${id}/results${status ? `?status=${status}` : ''}`,
     ),
+  getReport: (id: string) => request<QualityReport>(`/api/quality/tasks/${id}/report`),
+  // 导出走浏览器原生下载（会话 cookie 自动携带），不走 request 封装
+  exportUrl: (id: string, format: 'json' | 'junit') =>
+    `/api/quality/tasks/${id}/export?format=${format}`,
 }
 
 export const rolesApi = {

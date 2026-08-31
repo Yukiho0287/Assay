@@ -74,6 +74,13 @@ func New() probe.Probe {
 			CaseCount:        len(defs),
 			RequestsPerCase:  1,
 			SupportsMaxCases: false, // 固定请求矩阵：断言相互依赖，砍任何一格都破坏套件语义
+			// 权重依据：边际率与确定性各自独立揭示计量虚报（最核心的两类问题），
+			// 流式一致性覆盖面窄（单点对照）降权
+			Checkpoints: []probe.Checkpoint{
+				{ID: suiteMarginal, Name: "恒定边际率", Weight: 2, Suites: []string{suiteMarginal}},
+				{ID: suiteDeterminism, Name: "计量确定性", Weight: 2, Suites: []string{suiteDeterminism}},
+				{ID: suiteStream, Name: "流式一致性", Weight: 1, Suites: []string{suiteStream}},
+			},
 		},
 		SlotCount: func(probe.Params) int { return len(defs) },
 		Run:       run,

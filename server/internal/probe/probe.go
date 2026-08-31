@@ -6,6 +6,7 @@ package probe
 import (
 	"context"
 	"net/http"
+	"slices"
 )
 
 // Target 检测对象参数快照（渠道 × 模型条目），任务创建时写进 tasks.target jsonb。
@@ -75,6 +76,28 @@ type RunInput struct {
 	Progress func(ctx context.Context, done, total int)
 }
 
+// Checkpoint 评分检查点：把检测项的用例结果聚合成一个带权重的评分单元，评分板按检查点行展示。
+// 检查点得分 = 命中用例中 passed 占比（rejected 与 violated 均计失败——上游拒绝服务本身就是被测行为）；
+// 检测项得分 = 各检查点得分按 Weight 加权平均（total=0 的未采样检查点不参与）。
+type Checkpoint struct {
+	ID     string   // 稳定标识，进导出报告，不可随意改
+	Name   string   // 中文展示名
+	Weight float64  // 同一检测项内的相对权重，须 > 0
+	Suites []string // 命中套件过滤器，nil = 不限
+	Modes  []string // 命中模式过滤器，nil = 不限
+}
+
+// Matches 判定一条用例结果是否归入本检查点。
+func (c Checkpoint) Matches(suite, mode string) bool {
+	if len(c.Suites) > 0 && !slices.Contains(c.Suites, suite) {
+		return false
+	}
+	if len(c.Modes) > 0 && !slices.Contains(c.Modes, mode) {
+		return false
+	}
+	return true
+}
+
 // Info 检测项元数据，与 api.ProbeInfo 一一对应。
 type Info struct {
 	ID           string
@@ -89,6 +112,8 @@ type Info struct {
 	RequestsPerCase int
 	// SupportsMaxCases 是否受「用例数上限」参数影响；固定请求矩阵的检测项为 false。
 	SupportsMaxCases bool
+	// Checkpoints 评分检查点（至少一个，registry 启动时校验），声明序即评分板展示序。
+	Checkpoints []Checkpoint
 }
 
 // Probe 一个检测项：元数据 + 槽位数预计算（创建任务时算 progress_total）+ 运行入口。

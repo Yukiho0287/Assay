@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, ChevronDown, Loader2, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, FileCode, FileJson, Loader2, X } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router'
 import { errText } from '@/components/channel-form-dialog'
 import { CaseStatusBadge, TaskStatusBadge } from '@/components/quality-badges'
@@ -43,6 +43,7 @@ import {
   qualityApi,
   type CaseStatus,
   type QualityCaseResult,
+  type QualityReport,
   type QualityTask,
   type TaskStatBucket,
 } from '@/lib/api'
@@ -85,6 +86,14 @@ export default function QualityTaskDetailPage() {
     enabled: task != null,
     // 运行中 3s 轮询让用例表实时填充；终结后靠 SSE 终态帧触发的失效拉最终数据
     refetchInterval: active ? 3000 : false,
+  })
+
+  // 评分板仅终态任务可用（运行中评分会随采集漂移）；SSE 终态帧翻转 enabled 后自动拉取
+  const terminal = status != null && isTerminalStatus(status)
+  const report = useQuery({
+    queryKey: ['quality-task-report', taskId],
+    queryFn: () => qualityApi.getReport(taskId),
+    enabled: task != null && terminal,
   })
 
   const [cancelOpen, setCancelOpen] = useState(false)
@@ -155,6 +164,9 @@ export default function QualityTaskDetailPage() {
         </p>
       )}
 
+      {terminal && report.data != null && (
+        <ScoreboardCard taskId={taskId} report={report.data} />
+      )}
       <SnapshotCard task={task} probeName={probeName} />
       {task.stats && <StatsCard stats={task.stats} />}
       <ResultsCard
@@ -191,6 +203,118 @@ export default function QualityTaskDetailPage() {
         </DialogContent>
       </Dialog>
     </div>
+  )
+}
+
+// 分级 → 颜色：与用例状态色系一致（绿=好、琥珀=中、红=差）
+const gradeColor: Record<string, string> = {
+  A: 'text-green-600 dark:text-green-400',
+  B: 'text-lime-600 dark:text-lime-400',
+  C: 'text-amber-600 dark:text-amber-400',
+  D: 'text-red-600 dark:text-red-400',
+}
+
+// ScoreboardCard 评分板：检查点 + 权重模型的展示层，原始判定以用例结果表为准
+function ScoreboardCard({ taskId, report }: { taskId: string; report: QualityReport }) {
+  const { t } = useI18n()
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="grid gap-1.5">
+            <CardTitle>{t('quality.scoreboard')}</CardTitle>
+            <CardDescription>{t('quality.scoreboardDesc')}</CardDescription>
+          </div>
+          <div className="flex gap-2">
+            <Button asChild variant="outline" size="sm">
+              <a href={qualityApi.exportUrl(taskId, 'json')} download>
+                <FileJson />
+                {t('quality.exportJson')}
+              </a>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <a href={qualityApi.exportUrl(taskId, 'junit')} download>
+                <FileCode />
+                {t('quality.exportJunit')}
+              </a>
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-6">
+        {report.incomplete && (
+          <p className="text-sm text-amber-600 dark:text-amber-400">
+            {t('quality.incompleteNote')}
+          </p>
+        )}
+        {report.score == null ? (
+          <p className="text-sm text-muted-foreground">{t('quality.noScore')}</p>
+        ) : (
+          <div className="flex items-baseline gap-3">
+            <span className="text-sm text-muted-foreground">{t('quality.overallScore')}</span>
+            <span
+              className={`text-4xl font-semibold tabular-nums ${gradeColor[report.grade ?? ''] ?? ''}`}
+            >
+              {report.score.toFixed(1)}
+            </span>
+            {report.grade && (
+              <span className={`text-2xl font-semibold ${gradeColor[report.grade] ?? ''}`}>
+                {report.grade}
+              </span>
+            )}
+          </div>
+        )}
+        <div className="grid gap-6 lg:grid-cols-2">
+          {report.probes.map((p) => (
+            <div key={p.probeId} className="grid content-start gap-2">
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-sm font-medium">{p.probeName}</p>
+                <span
+                  className={`text-lg font-semibold tabular-nums ${p.score != null ? '' : 'text-muted-foreground'}`}
+                >
+                  {p.score != null ? p.score.toFixed(1) : '—'}
+                </span>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('quality.checkpoint')}</TableHead>
+                    <TableHead className="text-right">{t('quality.weight')}</TableHead>
+                    <TableHead className="text-right">{t('quality.passRatio')}</TableHead>
+                    <TableHead className="w-40 text-right">{t('quality.score')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {p.checkpoints.map((c) => (
+                    <TableRow key={c.id}>
+                      <TableCell>{c.name}</TableCell>
+                      <TableCell className="text-right tabular-nums">{c.weight}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {c.total > 0 ? `${c.passed}/${c.total}` : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {c.score != null ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <Progress value={c.score} className="h-1.5 w-16" />
+                            <span className="w-10 text-right tabular-nums">
+                              {c.score.toFixed(1)}
+                            </span>
+                          </div>
+                        ) : (
+                          <p className="text-right text-muted-foreground">
+                            {t('quality.unsampled')}
+                          </p>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

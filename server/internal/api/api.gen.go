@@ -132,6 +132,30 @@ func (e Protocol) Valid() bool {
 	}
 }
 
+// Defines values for QualityReportGrade.
+const (
+	A QualityReportGrade = "A"
+	B QualityReportGrade = "B"
+	C QualityReportGrade = "C"
+	D QualityReportGrade = "D"
+)
+
+// Valid indicates whether the value is a known member of the QualityReportGrade enum.
+func (e QualityReportGrade) Valid() bool {
+	switch e {
+	case A:
+		return true
+	case B:
+		return true
+	case C:
+		return true
+	case D:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TaskStatus.
 const (
 	Canceled  TaskStatus = "canceled"
@@ -153,6 +177,24 @@ func (e TaskStatus) Valid() bool {
 	case Running:
 		return true
 	case Succeeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ExportQualityTaskParamsFormat.
+const (
+	Json  ExportQualityTaskParamsFormat = "json"
+	Junit ExportQualityTaskParamsFormat = "junit"
+)
+
+// Valid indicates whether the value is a known member of the ExportQualityTaskParamsFormat enum.
+func (e ExportQualityTaskParamsFormat) Valid() bool {
+	switch e {
+	case Json:
+		return true
+	case Junit:
 		return true
 	default:
 		return false
@@ -242,6 +284,23 @@ type ChannelUpdate struct {
 	Name      *string     `json:"name,omitempty"`
 	Note      *string     `json:"note,omitempty"`
 	Protocols *[]Protocol `json:"protocols,omitempty"`
+}
+
+// CheckpointScore 一个评分检查点的聚合结果；得分 = passed/total × 100（rejected 与 violated 均计失败）
+type CheckpointScore struct {
+	// Id 检查点稳定标识（检测项元数据声明）
+	Id       string `json:"id"`
+	Name     string `json:"name"`
+	Passed   int    `json:"passed"`
+	Rejected int    `json:"rejected"`
+
+	// Score 0-100；未采样（total=0，如被用例上限截掉）时缺省且不参与加权
+	Score    *float32 `json:"score,omitempty"`
+	Total    int      `json:"total"`
+	Violated int      `json:"violated"`
+
+	// Weight 同一检测项内的相对权重
+	Weight float32 `json:"weight"`
 }
 
 // ConnectivityResult defines model for ConnectivityResult.
@@ -375,6 +434,18 @@ type ProbeInfo struct {
 	SupportsMaxCases bool `json:"supportsMaxCases"`
 }
 
+// ProbeScore defines model for ProbeScore.
+type ProbeScore struct {
+	Checkpoints []CheckpointScore `json:"checkpoints"`
+	ProbeId     string            `json:"probeId"`
+
+	// ProbeName 检测项中文名（快照自注册表；检测项已下架时回退为 id）
+	ProbeName string `json:"probeName"`
+
+	// Score 检查点加权平均（0-100）；全部检查点未采样时缺省
+	Score *float32 `json:"score,omitempty"`
+}
+
 // Protocol 渠道支持的接口协议
 type Protocol string
 
@@ -401,6 +472,40 @@ type QualityCaseResult struct {
 	// Suite 语料套件名（如 TestEnforcerCases）
 	Suite string `json:"suite"`
 }
+
+// QualityExport 证据链自足的 JSON 导出：任务快照 + 评分板 + 全量用例级结果，脱离平台可独立审计
+type QualityExport struct {
+	// Report 评分板：按「检查点 + 权重」模型即时计算——检查点得分=命中用例通过占比，检测项得分=检查点加权平均，总分=各检测项等权平均。原始判定以用例级结果为准，评分是其视图。
+	Report  QualityReport       `json:"report"`
+	Results []QualityCaseResult `json:"results"`
+	Task    QualityTask         `json:"task"`
+
+	// Tool 固定 "assay"
+	Tool string `json:"tool"`
+
+	// Version 导出时服务端版本
+	Version string `json:"version"`
+}
+
+// QualityReport 评分板：按「检查点 + 权重」模型即时计算——检查点得分=命中用例通过占比，检测项得分=检查点加权平均，总分=各检测项等权平均。原始判定以用例级结果为准，评分是其视图。
+type QualityReport struct {
+	GeneratedAt time.Time `json:"generatedAt"`
+
+	// Grade 分级：A ≥95、B ≥80、C ≥60、D <60
+	Grade *QualityReportGrade `json:"grade,omitempty"`
+
+	// Incomplete 任务非正常结束（failed/canceled），评分仅基于已采集数据
+	Incomplete *bool        `json:"incomplete,omitempty"`
+	Probes     []ProbeScore `json:"probes"`
+
+	// Score 总分 0-100；无任何已采样检查点时缺省
+	Score  *float32           `json:"score,omitempty"`
+	Status TaskStatus         `json:"status"`
+	TaskId openapi_types.UUID `json:"taskId"`
+}
+
+// QualityReportGrade 分级：A ≥95、B ≥80、C ≥60、D <60
+type QualityReportGrade string
 
 // QualityTask defines model for QualityTask.
 type QualityTask struct {
@@ -589,6 +694,14 @@ type ListQualityTasksParams struct {
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// ExportQualityTaskParams defines parameters for ExportQualityTask.
+type ExportQualityTaskParams struct {
+	Format ExportQualityTaskParamsFormat `form:"format" json:"format"`
+}
+
+// ExportQualityTaskParamsFormat defines parameters for ExportQualityTask.
+type ExportQualityTaskParamsFormat string
+
 // ListQualityTaskResultsParams defines parameters for ListQualityTaskResults.
 type ListQualityTaskResultsParams struct {
 	Status *CaseStatus `form:"status,omitempty" json:"status,omitempty"`
@@ -695,6 +808,12 @@ type ServerInterface interface {
 	// StreamQualityTaskEvents 任务进度事件流（需 quality 权限；SSE，连接后先推当前快照，任务终态后关闭）
 	// (GET /quality/tasks/{id}/events)
 	StreamQualityTaskEvents(w http.ResponseWriter, r *http.Request, id IdPath)
+	// ExportQualityTask 导出报告（需 quality 权限；json=证据链自足报告，junit=JUnit XML；仅终态任务可用）
+	// (GET /quality/tasks/{id}/export)
+	ExportQualityTask(w http.ResponseWriter, r *http.Request, id IdPath, params ExportQualityTaskParams)
+	// GetQualityTaskReport 评分板（需 quality 权限；检查点加权评分，按当前注册表口径即时计算，仅终态任务可用）
+	// (GET /quality/tasks/{id}/report)
+	GetQualityTaskReport(w http.ResponseWriter, r *http.Request, id IdPath)
 	// ListQualityTaskResults 用例级结果（需 quality 权限；可按判定状态过滤）
 	// (GET /quality/tasks/{id}/results)
 	ListQualityTaskResults(w http.ResponseWriter, r *http.Request, id IdPath, params ListQualityTaskResultsParams)
@@ -1192,6 +1311,74 @@ func (siw *ServerInterfaceWrapper) StreamQualityTaskEvents(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// ExportQualityTask operation middleware
+func (siw *ServerInterfaceWrapper) ExportQualityTask(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ExportQualityTaskParams
+
+	// ------------- Required query parameter "format" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "format", r.URL.Query(), &params.Format, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "format"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "format", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportQualityTask(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetQualityTaskReport operation middleware
+func (siw *ServerInterfaceWrapper) GetQualityTaskReport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetQualityTaskReport(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListQualityTaskResults operation middleware
 func (siw *ServerInterfaceWrapper) ListQualityTaskResults(w http.ResponseWriter, r *http.Request) {
 
@@ -1586,6 +1773,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/quality/tasks", wrapper.CreateQualityTask)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks/{id}", wrapper.GetQualityTask)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks/{id}/results", wrapper.ListQualityTaskResults)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks/{id}/report", wrapper.GetQualityTaskReport)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks/{id}/export", wrapper.ExportQualityTask)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/quality/tasks/{id}/cancel", wrapper.CancelQualityTask)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/quality/tasks/{id}/events", wrapper.StreamQualityTaskEvents)
 
