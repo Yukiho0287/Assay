@@ -379,7 +379,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 取消任务（需 quality 权限；仅排队中的任务可取消） */
+        /** 取消任务（需 quality 权限；排队或运行中的任务可取消，运行中的中止在途请求） */
         post: operations["cancelQualityTask"];
         delete?: never;
         options?: never;
@@ -1653,7 +1653,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description 任务已开始或已结束，不可取消 */
+            /** @description 任务已结束，不可取消 */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -249,18 +249,24 @@ func (h *handlers) CancelQualityTask(w http.ResponseWriter, r *http.Request, id 
 	if !ok {
 		return
 	}
-	rows, err := h.q.CancelQueuedTask(r.Context(), id)
+	rows, err := h.q.CancelTask(r.Context(), id)
 	if err != nil {
 		h.internalError(w, "取消任务失败", err)
 		return
 	}
 	if rows == 0 {
-		// 状态守卫兜底并发：读到 queued 之后可能已被 worker 领走
-		writeJSON(w, http.StatusConflict, api.Error{Error: "任务已开始或已结束，不可取消"})
+		// 状态守卫兜底并发：读到 queued/running 之后可能已到终态
+		writeJSON(w, http.StatusConflict, api.Error{Error: "任务已结束，不可取消"})
 		return
 	}
-	// river job 不用动：worker 领到后 MarkTaskRunning 守卫（canceled 非 queued/running）
-	// 命中 0 行即静默跳过
+	// 任务行已翻 canceled（权威状态），再取消 river job：排队的原子取消；
+	// 运行中的通知 worker 取消 ctx 中止在途请求。失败只告警不回滚——
+	// MarkTaskRunning/FinishTask 均守卫状态，残余 worker 写不脏已取消的任务
+	if task.RiverJobID.Valid {
+		if err := h.tq.CancelJob(r.Context(), task.RiverJobID.Int64); err != nil {
+			h.log.Warn("取消 river job 失败（任务行已取消，靠状态守卫兜底）", "task", id, "job", task.RiverJobID.Int64, "err", err)
+		}
+	}
 	h.broker.notify(r.Context(), id, "canceled", int(task.ProgressDone), int(task.ProgressTotal))
 	h.log.Info("任务已取消", "task", id)
 

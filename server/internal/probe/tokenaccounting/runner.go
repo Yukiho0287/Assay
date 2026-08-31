@@ -135,6 +135,15 @@ func run(ctx context.Context, in probe.RunInput) error {
 			if gctx.Err() != nil {
 				return gctx.Err()
 			}
+			// 请求层已定型的行（rejected / 提取层 violated）立即落库实时可见：
+			// 这些结论不依赖其余槽位、不会再变。通过采集的行必须等阶段二跨行
+			// 断言——提前标 passed 可能被边际率/确定性断言翻成 violated，出现
+			// "绿转红"的临时错误结论，违背证据链原则，故只早报已定型行。
+			if s.status != "" {
+				if err := in.Report(gctx, finalizedResult(s)); err != nil {
+					return fmt.Errorf("结果落库失败: %w", err)
+				}
+			}
 			// 进度回调必须在锁内：保证 done 的落库按递增序发生，
 			// 否则并发完成时旧值可能后写，任务终态进度停在中间值
 			mu.Lock()
@@ -246,22 +255,11 @@ func evaluate(fetched []*slotFetch) []probe.CaseResult {
 
 	results := make([]probe.CaseResult, 0, len(fetched))
 	for _, s := range fetched {
-		res := probe.CaseResult{
-			Probe:           probeID,
-			Suite:           s.def.suite,
-			Line:            s.def.line,
-			Mode:            s.def.mode,
-			SelectionReason: s.def.suite,
-			HTTPStatus:      s.httpStatus,
-			LatencyMs:       s.latencyMs,
-			Attempts:        s.attempts,
-		}
-		if s.status != "" { // 请求层已定型（rejected / 无 usage 的 violated）
-			res.Status = s.status
-			res.Message = truncateMessage(s.message)
-			results = append(results, res)
+		if s.status != "" { // 请求层已定型，与采集阶段早报内容一致（幂等覆盖）
+			results = append(results, finalizedResult(s))
 			continue
 		}
+		res := baseResult(s)
 
 		u := s.usage
 		res.Arguments = truncateRunes(u.Raw, 1000)
@@ -356,6 +354,28 @@ func evaluate(fetched []*slotFetch) []probe.CaseResult {
 		results = append(results, res)
 	}
 	return results
+}
+
+// baseResult 槽位结果骨架（元数据部分），采集早报与统一评估两处复用。
+func baseResult(s *slotFetch) probe.CaseResult {
+	return probe.CaseResult{
+		Probe:           probeID,
+		Suite:           s.def.suite,
+		Line:            s.def.line,
+		Mode:            s.def.mode,
+		SelectionReason: s.def.suite,
+		HTTPStatus:      s.httpStatus,
+		LatencyMs:       s.latencyMs,
+		Attempts:        s.attempts,
+	}
+}
+
+// finalizedResult 请求层已定型行（rejected / 无 usage 的 violated）的完整结果。
+func finalizedResult(s *slotFetch) probe.CaseResult {
+	res := baseResult(s)
+	res.Status = s.status
+	res.Message = truncateMessage(s.message)
+	return res
 }
 
 // marginalRates 收集全部可算的边际率（相邻两档都拿到 usage 才可算）。

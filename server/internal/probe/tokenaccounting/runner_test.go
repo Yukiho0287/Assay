@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Yukiho0287/assay/server/internal/probe"
 )
@@ -303,6 +304,80 @@ func TestRejectedRetriesAndAttempts(t *testing.T) {
 			t.Fatalf("%s httpStatus = %d, want 429", k, r.HTTPStatus)
 		}
 	}
+}
+
+// 增量落库：请求层已定型的行（rejected）在采集阶段即上报，不等阶段二统一评估。
+// marginal/4 阻塞、其余 8 个请求 429 → 放行前 Report 应已收到恰好 8 条 rejected。
+func TestEarlyReportFinalizedRows(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.Unmarshal(data, &body)
+		if len(body.Messages) == 1 && len(body.Messages[0].Content) == 4*step {
+			<-release // marginal/4 卡住，模拟慢渠道
+		}
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":{"message":"rate limited"}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	var mu sync.Mutex
+	reported := map[string]probe.CaseResult{}
+	in := probe.RunInput{
+		Target: probe.Target{BaseURL: srv.URL, Model: "test-model", Protocols: []string{"openai_chat"}},
+		APIKey: "test-key",
+		Params: probe.Params{Concurrency: 4},
+		Client: srv.Client(),
+		Report: func(_ context.Context, r probe.CaseResult) error {
+			mu.Lock()
+			defer mu.Unlock()
+			reported[key(r.Suite, r.Line, r.Mode)] = r
+			return nil
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- New().Run(context.Background(), in) }()
+
+	// 轮询等 8 条早报到位（阻塞行未放行，评估阶段必然未开始）
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		n := len(reported)
+		mu.Unlock()
+		if n == 8 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("放行前早报行数 = %d, want 8", n)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	if _, ok := reported[key(suiteMarginal, 4, probe.ModeNonStream)]; ok {
+		t.Fatal("阻塞中的 marginal/4 不应已上报")
+	}
+	for k, r := range reported {
+		if r.Status != probe.StatusRejected {
+			t.Fatalf("早报行 %s status = %s, want rejected", k, r.Status)
+		}
+	}
+	mu.Unlock()
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(reported) != 9 {
+		t.Fatalf("终态行数 = %d, want 9", len(reported))
+	}
+	wantStatus(t, reported, key(suiteMarginal, 4, probe.ModeNonStream), probe.StatusRejected)
 }
 
 // violated 不重试：请求层即定型的 violated（流式缺 usage）在 Reruns=2 下 attempts 仍为 1。

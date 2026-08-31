@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Assay API
   description: LLM 渠道检测平台 API。本文件是前后端契约的唯一真相源（契约优先）。
-  version: 0.5.0
+  version: 0.5.1
 servers:
   - url: /api
 paths:
@@ -690,7 +690,7 @@ paths:
   /quality/tasks/{id}/cancel:
     post:
       operationId: cancelQualityTask
-      summary: 取消任务（需 quality 权限；仅排队中的任务可取消）
+      summary: 取消任务（需 quality 权限；排队或运行中的任务可取消，运行中的中止在途请求）
       tags: [quality]
       parameters:
         - $ref: "#/components/parameters/IdPath"
@@ -708,7 +708,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: 任务已开始或已结束，不可取消
+          description: 任务已结束，不可取消
           content:
             application/json:
               schema:

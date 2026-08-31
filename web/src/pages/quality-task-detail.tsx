@@ -13,6 +13,14 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import {
   Select,
@@ -76,13 +84,19 @@ export default function QualityTaskDetailPage() {
     refetchInterval: active ? 3000 : false,
   })
 
+  const [cancelOpen, setCancelOpen] = useState(false)
   const cancel = useMutation({
     mutationFn: () => qualityApi.cancelTask(taskId),
     onSuccess: () => {
+      setCancelOpen(false)
       queryClient.invalidateQueries({ queryKey: ['quality-task', taskId] })
       queryClient.invalidateQueries({ queryKey: ['quality-tasks'] })
     },
   })
+  const closeCancelDialog = () => {
+    setCancelOpen(false)
+    cancel.reset()
+  }
 
   if (taskQ.isPending) {
     return <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
@@ -116,14 +130,9 @@ export default function QualityTaskDetailPage() {
         </Button>
         <h1 className="text-2xl font-semibold">{t('quality.taskTitle')}</h1>
         {status && <TaskStatusBadge status={status} />}
-        {status === 'queued' && (
-          <Button
-            variant="outline"
-            className="ml-auto"
-            disabled={cancel.isPending}
-            onClick={() => cancel.mutate()}
-          >
-            {cancel.isPending ? <Loader2 className="animate-spin" /> : <X />}
+        {(status === 'queued' || status === 'running') && (
+          <Button variant="outline" className="ml-auto" onClick={() => setCancelOpen(true)}>
+            <X />
             {t('quality.cancelTask')}
           </Button>
         )}
@@ -137,7 +146,6 @@ export default function QualityTaskDetailPage() {
           </span>
         </div>
       )}
-      {cancel.isError && <p className="text-sm text-destructive">{errText(cancel.error)}</p>}
       {task.error && (
         <p className="text-sm text-destructive">
           {t('quality.taskError')}：{task.error}
@@ -152,7 +160,33 @@ export default function QualityTaskDetailPage() {
         error={results.isError ? results.error : null}
         statusFilter={statusFilter}
         onFilterChange={setStatusFilter}
+        active={active}
       />
+
+      <Dialog open={cancelOpen} onOpenChange={(o) => { if (!o) closeCancelDialog() }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('quality.cancelTask')}</DialogTitle>
+            <DialogDescription>{t('quality.cancelConfirmDesc')}</DialogDescription>
+          </DialogHeader>
+          {cancel.isError && (
+            <p className="text-sm text-destructive">{errText(cancel.error)}</p>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeCancelDialog}>
+              {t('quality.keepRunning')}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={cancel.isPending}
+              onClick={() => cancel.mutate()}
+            >
+              {cancel.isPending && <Loader2 className="animate-spin" />}
+              {t('quality.cancelConfirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -318,12 +352,14 @@ function ResultsCard({
   error,
   statusFilter,
   onFilterChange,
+  active,
 }: {
   results: QualityCaseResult[] | undefined
   pending: boolean
   error: unknown
   statusFilter: CaseStatus | 'all'
   onFilterChange: (v: CaseStatus | 'all') => void
+  active: boolean
 }) {
   const { t } = useI18n()
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -355,7 +391,7 @@ function ResultsCard({
           <p className="text-sm text-destructive">{errText(error)}</p>
         ) : results == null || results.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            {t('quality.resultsEmpty')}
+            {active ? t('quality.resultsPending') : t('quality.resultsEmpty')}
           </p>
         ) : (
           <Table>

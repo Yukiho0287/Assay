@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/Yukiho0287/assay/server/internal/db"
 )
@@ -81,6 +83,17 @@ func (c *Client) EnqueueQualityTaskTx(ctx context.Context, tx pgx.Tx, taskID uui
 		return 0, fmt.Errorf("任务入队: %w", err)
 	}
 	return res.Job.ID, nil
+}
+
+// CancelJob 取消 river job：排队中的原子取消；运行中的经 LISTEN/NOTIFY 通知执行端
+// （跨进程，蓝绿双实例也可达）取消其 work ctx——尽力而为，job 恰好跑完则保持 completed。
+// job 已不存在视为无需取消（任务行状态才是权威）。
+func (c *Client) CancelJob(ctx context.Context, jobID int64) error {
+	_, err := c.river.JobCancel(ctx, jobID)
+	if errors.Is(err, rivertype.ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 // SweepOrphans 启动时兜底：任务挂在 running 但对应 river job 已终结（completed/

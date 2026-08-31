@@ -681,7 +681,7 @@ type ServerInterface interface {
 	// GetQualityTask 任务详情（需 quality 权限；含参数快照与聚合统计）
 	// (GET /quality/tasks/{id})
 	GetQualityTask(w http.ResponseWriter, r *http.Request, id IdPath)
-	// CancelQualityTask 取消任务（需 quality 权限；仅排队中的任务可取消）
+	// CancelQualityTask 取消任务（需 quality 权限；排队或运行中的任务可取消，运行中的中止在途请求）
 	// (POST /quality/tasks/{id}/cancel)
 	CancelQualityTask(w http.ResponseWriter, r *http.Request, id IdPath)
 	// StreamQualityTaskEvents 任务进度事件流（需 quality 权限；SSE，连接后先推当前快照，任务终态后关闭）

@@ -53,14 +53,14 @@ func (q *Queries) AggregateTaskCaseResults(ctx context.Context, taskID uuid.UUID
 	return items, nil
 }
 
-const cancelQueuedTask = `-- name: CancelQueuedTask :execrows
+const cancelTask = `-- name: CancelTask :execrows
 update tasks set status = 'canceled', finished_at = now()
-where id = $1 and status = 'queued'
+where id = $1 and status in ('queued', 'running')
 `
 
-// 仅排队中可取消（running 的 MVP 不支持中断）
-func (q *Queries) CancelQueuedTask(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, cancelQueuedTask, id)
+// 排队或运行中可取消；running 的中断由 river JobCancel 通知 worker 取消 ctx
+func (q *Queries) CancelTask(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelTask, id)
 	if err != nil {
 		return 0, err
 	}
@@ -595,6 +595,7 @@ func (q *Queries) GetSessionUser(ctx context.Context, tokenHash []byte) (GetSess
 const getTask = `-- name: GetTask :one
 select t.id, t.kind, t.status, t.channel_id, t.target, t.probes, t.params,
        t.progress_total, t.progress_done, t.error, t.created_at, t.started_at, t.finished_at,
+       t.river_job_id,
        u.username as created_by_name
 from tasks t
 left join users u on u.id = t.created_by
@@ -615,6 +616,7 @@ type GetTaskRow struct {
 	CreatedAt     time.Time
 	StartedAt     pgtype.Timestamptz
 	FinishedAt    pgtype.Timestamptz
+	RiverJobID    pgtype.Int8
 	CreatedByName *string
 }
 
@@ -635,6 +637,7 @@ func (q *Queries) GetTask(ctx context.Context, id uuid.UUID) (GetTaskRow, error)
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.RiverJobID,
 		&i.CreatedByName,
 	)
 	return i, err
@@ -923,6 +926,7 @@ func (q *Queries) ListTaskCaseResults(ctx context.Context, arg ListTaskCaseResul
 const listTasks = `-- name: ListTasks :many
 select t.id, t.kind, t.status, t.channel_id, t.target, t.probes, t.params,
        t.progress_total, t.progress_done, t.error, t.created_at, t.started_at, t.finished_at,
+       t.river_job_id,
        u.username as created_by_name
 from tasks t
 left join users u on u.id = t.created_by
@@ -951,6 +955,7 @@ type ListTasksRow struct {
 	CreatedAt     time.Time
 	StartedAt     pgtype.Timestamptz
 	FinishedAt    pgtype.Timestamptz
+	RiverJobID    pgtype.Int8
 	CreatedByName *string
 }
 
@@ -977,6 +982,7 @@ func (q *Queries) ListTasks(ctx context.Context, arg ListTasksParams) ([]ListTas
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.FinishedAt,
+			&i.RiverJobID,
 			&i.CreatedByName,
 		); err != nil {
 			return nil, err
@@ -1196,7 +1202,8 @@ func (q *Queries) UpdateRole(ctx context.Context, arg UpdateRoleParams) (UpdateR
 }
 
 const updateTaskProgress = `-- name: UpdateTaskProgress :exec
-update tasks set progress_total = $2, progress_done = $3 where id = $1
+update tasks set progress_total = $2, progress_done = $3
+where id = $1 and status = 'running'
 `
 
 type UpdateTaskProgressParams struct {
@@ -1205,6 +1212,7 @@ type UpdateTaskProgressParams struct {
 	ProgressDone  int32
 }
 
+// 守卫 running：任务被取消后 worker 残余的进度写入不再污染定格记录
 func (q *Queries) UpdateTaskProgress(ctx context.Context, arg UpdateTaskProgressParams) error {
 	_, err := q.db.Exec(ctx, updateTaskProgress, arg.ID, arg.ProgressTotal, arg.ProgressDone)
 	return err

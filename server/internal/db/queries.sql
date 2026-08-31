@@ -160,6 +160,7 @@ update tasks set river_job_id = $2 where id = $1;
 -- name: GetTask :one
 select t.id, t.kind, t.status, t.channel_id, t.target, t.probes, t.params,
        t.progress_total, t.progress_done, t.error, t.created_at, t.started_at, t.finished_at,
+       t.river_job_id,
        u.username as created_by_name
 from tasks t
 left join users u on u.id = t.created_by
@@ -168,6 +169,7 @@ where t.id = $1;
 -- name: ListTasks :many
 select t.id, t.kind, t.status, t.channel_id, t.target, t.probes, t.params,
        t.progress_total, t.progress_done, t.error, t.created_at, t.started_at, t.finished_at,
+       t.river_job_id,
        u.username as created_by_name
 from tasks t
 left join users u on u.id = t.created_by
@@ -189,12 +191,14 @@ update tasks set status = $2, error = $3, finished_at = now()
 where id = $1 and status = 'running';
 
 -- name: UpdateTaskProgress :exec
-update tasks set progress_total = $2, progress_done = $3 where id = $1;
+-- 守卫 running：任务被取消后 worker 残余的进度写入不再污染定格记录
+update tasks set progress_total = $2, progress_done = $3
+where id = $1 and status = 'running';
 
--- name: CancelQueuedTask :execrows
--- 仅排队中可取消（running 的 MVP 不支持中断）
+-- name: CancelTask :execrows
+-- 排队或运行中可取消；running 的中断由 river JobCancel 通知 worker 取消 ctx
 update tasks set status = 'canceled', finished_at = now()
-where id = $1 and status = 'queued';
+where id = $1 and status in ('queued', 'running');
 
 -- name: FailOrphanTasks :execrows
 -- 启动孤儿清扫：river_job 已不存在/已终结但任务还挂在 running 的，标记失败
