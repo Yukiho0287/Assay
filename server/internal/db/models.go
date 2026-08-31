@@ -12,17 +12,19 @@ import (
 )
 
 type Channel struct {
-	ID        uuid.UUID
-	Name      string
-	BaseUrl   string
-	ApiKey    string
-	KeyPrefix string
-	Protocols []string
-	Currency  string
-	Note      string
-	Disabled  bool
-	LastTest  []byte
-	CreatedAt time.Time
+	ID                   uuid.UUID
+	Name                 string
+	BaseUrl              string
+	ApiKey               string
+	KeyPrefix            string
+	Protocols            []string
+	Currency             string
+	Note                 string
+	Disabled             bool
+	LastTest             []byte
+	CreatedAt            time.Time
+	ProbeIntervalMinutes pgtype.Int4
+	ProbeModelID         pgtype.UUID
 }
 
 type ChannelModel struct {
@@ -33,6 +35,19 @@ type ChannelModel struct {
 	OutputPrice      *float64
 	CachedInputPrice *float64
 	CreatedAt        time.Time
+}
+
+type ConnectivityResult struct {
+	ID         int64
+	ChannelID  uuid.UUID
+	Model      string
+	Source     string
+	Protocol   string
+	Ok         bool
+	HttpStatus pgtype.Int4
+	TtftMs     pgtype.Int4
+	Error      *string
+	TestedAt   time.Time
 }
 
 type Role struct {

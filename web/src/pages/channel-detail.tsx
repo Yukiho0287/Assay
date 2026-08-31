@@ -166,19 +166,37 @@ function ModelFormDialog({
   )
 }
 
-// TestCard 连通测试卡：选模型发起测试 + 展示渠道最近一次结果快照
+// TestCard 连通测试卡：选模型发起测试 + 展示渠道最近一次结果快照 + 定时探活设置
 function TestCard({ channel }: { channel: ChannelDetail }) {
   const { t } = useI18n()
   const queryClient = useQueryClient()
   const [modelId, setModelId] = useState<string>('')
+  const [probeModel, setProbeModel] = useState<string>(channel.probeModelId ?? '')
+  const [intervalMin, setIntervalMin] = useState<string>(
+    channel.probeIntervalMinutes != null ? String(channel.probeIntervalMinutes) : 'off',
+  )
 
   const test = useMutation({
     mutationFn: (mid: string) => channelsApi.test(channel.id, mid),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['channels'] }),
   })
+  // 保存探活设置：关闭发 0 哨兵（后端置双列 null），开启须成对提交间隔+模型
+  const saveProbe = useMutation({
+    mutationFn: () =>
+      channelsApi.update(
+        channel.id,
+        intervalMin === 'off'
+          ? { probeIntervalMinutes: 0 }
+          : { probeIntervalMinutes: Number(intervalMin), probeModelId: probeModel },
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['channels'] }),
+  })
 
   const selected = modelId || channel.models[0]?.id || ''
   const last = channel.lastTest
+  // 探活模型被删（on delete set null）但间隔还在：调度已停摆，提示重选
+  const scheduleModelGone =
+    channel.probeIntervalMinutes != null && channel.probeModelId == null
 
   return (
     <Card>
@@ -255,6 +273,70 @@ function TestCard({ channel }: { channel: ChannelDetail }) {
             </Table>
           </div>
         )}
+
+        <div className="grid gap-3 border-t pt-4">
+          <div>
+            <p className="text-sm font-medium">{t('test.schedule')}</p>
+            <p className="text-sm text-muted-foreground">{t('test.scheduleDesc')}</p>
+          </div>
+          {scheduleModelGone && (
+            <p className="text-sm text-amber-600 dark:text-amber-400">
+              {t('test.scheduleModelGone')}
+            </p>
+          )}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="grid gap-2">
+              <Label>{t('test.scheduleModel')}</Label>
+              <Select
+                value={probeModel}
+                onValueChange={setProbeModel}
+                disabled={channel.models.length === 0}
+              >
+                <SelectTrigger className="w-56">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {channel.models.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label>{t('test.interval')}</Label>
+              <Select value={intervalMin} onValueChange={setIntervalMin}>
+                <SelectTrigger className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">{t('test.intervalOff')}</SelectItem>
+                  {/* 当前值若是 API 设的非档位值（如 1），并入选项保证 Select 能回显 */}
+                  {[...new Set([5, 15, 30, 60, 360, 1440,
+                    ...(intervalMin !== 'off' ? [Number(intervalMin)] : [])])]
+                    .sort((a, b) => a - b)
+                    .map((v) => (
+                      <SelectItem key={v} value={String(v)}>
+                        {v} {t('unit.minutes')}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              variant="outline"
+              disabled={saveProbe.isPending || (intervalMin !== 'off' && !probeModel)}
+              onClick={() => saveProbe.mutate()}
+            >
+              {saveProbe.isPending && <Loader2 className="animate-spin" />}
+              {t('test.scheduleSave')}
+            </Button>
+          </div>
+          {saveProbe.isError && (
+            <p className="text-sm text-destructive">{errText(saveProbe.error)}</p>
+          )}
+        </div>
       </CardContent>
     </Card>
   )

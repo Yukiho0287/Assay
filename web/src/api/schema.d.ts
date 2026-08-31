@@ -267,6 +267,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/channels/{id}/connectivity/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 连通历史（登录即可；总览延迟曲线数据源，含手动测试与定时探活两种来源） */
+        get: operations["getChannelConnectivityHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/overview/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 总览渠道卡片（登录即可；渠道基本信息 + 各模型最近终态质量任务得分，得分即时计算不持久化） */
+        get: operations["listOverviewChannels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/update": {
         parameters: {
             query?: never;
@@ -547,6 +581,13 @@ export interface components {
             disabled: boolean;
             modelCount: number;
             lastTest?: components["schemas"]["ConnectivityTest"];
+            /** @description 定时探活间隔分钟（1-1440）；缺省=未开启 */
+            probeIntervalMinutes?: number;
+            /**
+             * Format: uuid
+             * @description 定时探活用的模型条目；条目被删自动置空、调度停摆
+             */
+            probeModelId?: string;
             /** Format: date-time */
             createdAt: string;
         };
@@ -571,6 +612,13 @@ export interface components {
             currency?: components["schemas"]["Currency"];
             note?: string;
             disabled?: boolean;
+            /** @description 定时探活间隔分钟；须与 probeModelId 成对提交整体覆盖，0=关闭（coalesce 语义写不了 null，故用 0 哨兵） */
+            probeIntervalMinutes?: number;
+            /**
+             * Format: uuid
+             * @description 定时探活模型条目（须属本渠道）；probeIntervalMinutes=0 时可缺省
+             */
+            probeModelId?: string;
         };
         ModelEntry: {
             /** Format: uuid */
@@ -613,6 +661,45 @@ export interface components {
             ttftMs?: number;
             /** @description 失败摘要（超时/连接错误/上游错误体截断） */
             error?: string;
+        };
+        /**
+         * @description 探测来源：manual=手动测试、scheduled=定时探活
+         * @enum {string}
+         */
+        ConnectivitySource: "manual" | "scheduled";
+        /** @description 连通历史点：一行=（一次测试 × 一协议），同次测试各协议行 testedAt 严格一致，前端按其分组还原一次测试 */
+        ConnectivityHistoryPoint: {
+            /** Format: date-time */
+            testedAt: string;
+            /** @description 当时探测用的模型名快照 */
+            model: string;
+            source: components["schemas"]["ConnectivitySource"];
+            protocol: components["schemas"]["Protocol"];
+            ok: boolean;
+            /** @description 首字延迟毫秒；失败时缺省（曲线在此断点留白） */
+            ttftMs?: number;
+        };
+        /** @description 总览卡片单模型得分行：该渠道 × 模型名快照的最近一个终态质量任务即时计算；taskStatus 非 succeeded 时得分基于不完整采样，前端须挂状态标注 */
+        OverviewModelScore: {
+            /** @description 模型名快照（与任务快照、连通历史同口径） */
+            model: string;
+            /**
+             * Format: uuid
+             * @description 任务快照里的模型条目 id（老任务缺省；用于匹配默认探活模型）
+             */
+            modelEntryId?: string;
+            /** Format: uuid */
+            taskId: string;
+            taskStatus: components["schemas"]["TaskStatus"];
+            /** Format: date-time */
+            finishedAt?: string;
+            /** @description 总分 0-100，口径与任务报告一致；无已采样检查点时缺省 */
+            score?: number;
+            grade?: components["schemas"]["Grade"];
+        };
+        OverviewChannel: components["schemas"]["Channel"] & {
+            /** @description 有终态质量任务的模型得分行（按模型名去重取最近一次） */
+            models: components["schemas"]["OverviewModelScore"][];
         };
         ProbeInfo: {
             /** @description 检测项唯一标识（如 tool_call_json_schema） */
@@ -725,6 +812,9 @@ export interface components {
             finishedAt?: string;
             /** @description 聚合统计（仅详情接口返回，任务未产生结果时缺省） */
             stats?: components["schemas"]["TaskStats"];
+            /** @description 总分 0-100；仅列表接口对终态任务返回，按当前检查点注册表口径即时计算、绝不持久化；排队/运行中或无已采样检查点时缺省 */
+            score?: number;
+            grade?: components["schemas"]["Grade"];
         };
         QualityTaskList: {
             items: components["schemas"]["QualityTask"][];
@@ -747,6 +837,11 @@ export interface components {
             arguments?: string;
             attempts: number;
         };
+        /**
+         * @description 评分分级：A ≥95、B ≥80、C ≥60、D <60
+         * @enum {string}
+         */
+        Grade: "A" | "B" | "C" | "D";
         /** @description 一个评分检查点的聚合结果；得分 = passed/total × 100（rejected 与 violated 均计失败） */
         CheckpointScore: {
             /** @description 检查点稳定标识（检测项元数据声明） */
@@ -776,11 +871,7 @@ export interface components {
             status: components["schemas"]["TaskStatus"];
             /** @description 总分 0-100；无任何已采样检查点时缺省 */
             score?: number;
-            /**
-             * @description 分级：A ≥95、B ≥80、C ≥60、D <60
-             * @enum {string}
-             */
-            grade?: "A" | "B" | "C" | "D";
+            grade?: components["schemas"]["Grade"];
             /** @description 任务非正常结束（failed/canceled），评分仅基于已采集数据 */
             incomplete?: boolean;
             probes: components["schemas"]["ProbeScore"][];
@@ -1509,6 +1600,58 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getChannelConnectivityHistory: {
+        parameters: {
+            query?: {
+                /** @description 回看窗口小时数 */
+                hours?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["IdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 时间升序的历史点列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ConnectivityHistoryPoint"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listOverviewChannels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 渠道卡片列表（按创建时间排序） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["OverviewChannel"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
         };
     };
     getUpdateStatus: {

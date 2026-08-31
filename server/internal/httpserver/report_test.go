@@ -82,6 +82,37 @@ func TestBuildReportCollectedExcluded(t *testing.T) {
 	}
 }
 
+// TestScoreProbesCountEquivalence 行路径（N=1 逐行）与预分组计数路径必须逐位同分——
+// 任务列表/总览走 GROUP BY 聚合喂 scoreProbes，口径与详情页评分板不允许有任何偏差。
+func TestScoreProbesCountEquivalence(t *testing.T) {
+	probeIDs := []string{"token_accounting", "tool_call_json_schema"}
+	rowCounts := []caseCount{
+		{Probe: "token_accounting", Suite: "marginal", Mode: "non_stream", Status: "passed", N: 1},
+		{Probe: "token_accounting", Suite: "marginal", Mode: "non_stream", Status: "passed", N: 1},
+		{Probe: "token_accounting", Suite: "marginal", Mode: "non_stream", Status: "violated", N: 1},
+		{Probe: "token_accounting", Suite: "determinism", Mode: "non_stream", Status: "passed", N: 1},
+		{Probe: "token_accounting", Suite: "stream_consistency", Mode: "stream", Status: "rejected", N: 1},
+		{Probe: "tool_call_json_schema", Suite: "TestBasicTypes", Mode: "non_stream", Status: "passed", N: 1},
+		{Probe: "tool_call_json_schema", Suite: "TestBasicTypes", Mode: "stream", Status: "collected", N: 1},
+	}
+	grouped := []caseCount{
+		{Probe: "token_accounting", Suite: "marginal", Mode: "non_stream", Status: "passed", N: 2},
+		{Probe: "token_accounting", Suite: "marginal", Mode: "non_stream", Status: "violated", N: 1},
+		{Probe: "token_accounting", Suite: "determinism", Mode: "non_stream", Status: "passed", N: 1},
+		{Probe: "token_accounting", Suite: "stream_consistency", Mode: "stream", Status: "rejected", N: 1},
+		{Probe: "tool_call_json_schema", Suite: "TestBasicTypes", Mode: "non_stream", Status: "passed", N: 1},
+		{Probe: "tool_call_json_schema", Suite: "TestBasicTypes", Mode: "stream", Status: "collected", N: 1},
+	}
+	_, byRow, gradeRow := scoreProbes(probeIDs, rowCounts)
+	_, byGroup, gradeGroup := scoreProbes(probeIDs, grouped)
+	if byRow == nil || byGroup == nil || *byRow != *byGroup {
+		t.Fatalf("两路径总分必须一致，得 row=%v group=%v", byRow, byGroup)
+	}
+	if *gradeRow != *gradeGroup {
+		t.Fatalf("两路径分级必须一致，得 row=%v group=%v", *gradeRow, *gradeGroup)
+	}
+}
+
 // TestBuildReportMultiProbe 总分 = 各检测项等权平均；未知检测项（已下架）不计分不崩溃。
 func TestBuildReportMultiProbe(t *testing.T) {
 	task := db.GetTaskRow{ID: uuid.New(), Status: "succeeded", Probes: []string{"token_accounting", "tool_call_json_schema", "gone_probe"}}

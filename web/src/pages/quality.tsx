@@ -3,7 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { ChevronDown, ChevronLeft, ChevronRight, Loader2, Play, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { errText } from '@/components/channel-form-dialog'
-import { TaskStatusBadge } from '@/components/quality-badges'
+import { ScoreText, TaskStatusBadge } from '@/components/quality-badges'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -372,6 +372,7 @@ export default function QualityPage() {
                   <TableHead>{t('quality.target')}</TableHead>
                   <TableHead>{t('quality.probes')}</TableHead>
                   <TableHead className="w-44">{t('quality.progress')}</TableHead>
+                  <TableHead>{t('quality.score')}</TableHead>
                   <TableHead>{t('quality.createdBy')}</TableHead>
                   <TableHead>{t('quality.createdAt')}</TableHead>
                   <TableHead className="w-10" />
@@ -463,6 +464,9 @@ function TaskRow({
             </span>
           </div>
         )}
+      </TableCell>
+      <TableCell>
+        <ScoreText score={task.score} grade={task.grade} className="text-sm font-medium" />
       </TableCell>
       <TableCell className="text-muted-foreground">{task.createdBy ?? '—'}</TableCell>
       <TableCell className="text-muted-foreground">

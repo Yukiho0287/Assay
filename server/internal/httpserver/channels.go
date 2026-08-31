@@ -8,7 +8,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Yukiho0287/assay/server/internal/api"
 	"github.com/Yukiho0287/assay/server/internal/db"
@@ -114,6 +116,14 @@ func (h *handlers) channelToAPI(c db.GetChannelRow) api.Channel {
 		} else {
 			h.log.Error("last_test 数据损坏", "channel", c.Name, "err", err)
 		}
+	}
+	if c.ProbeIntervalMinutes.Valid {
+		v := int(c.ProbeIntervalMinutes.Int32)
+		out.ProbeIntervalMinutes = &v
+	}
+	if c.ProbeModelID.Valid {
+		u := uuid.UUID(c.ProbeModelID.Bytes)
+		out.ProbeModelId = &u
 	}
 	return out
 }
@@ -246,8 +256,10 @@ func (h *handlers) GetChannel(w http.ResponseWriter, r *http.Request, id api.IdP
 	writeJSON(w, http.StatusOK, api.ChannelDetail{
 		Id: ch.Id, Name: ch.Name, BaseUrl: ch.BaseUrl, KeyPrefix: ch.KeyPrefix,
 		Protocols: ch.Protocols, Currency: ch.Currency, Note: ch.Note, Disabled: ch.Disabled,
-		ModelCount: ch.ModelCount, LastTest: ch.LastTest, CreatedAt: ch.CreatedAt,
-		Models: models,
+		ModelCount: ch.ModelCount, LastTest: ch.LastTest,
+		ProbeIntervalMinutes: ch.ProbeIntervalMinutes, ProbeModelId: ch.ProbeModelId,
+		CreatedAt: ch.CreatedAt,
+		Models:    models,
 	})
 }
 
@@ -310,6 +322,39 @@ func (h *handlers) UpdateChannel(w http.ResponseWriter, r *http.Request, id api.
 		p.Note = req.Note
 	}
 
+	// 定时探活配置：成对整体覆盖（interval=0 哨兵表示关闭，两列同置空）；
+	// 先全部校验再落库（fail-fast），实际写在主更新确认渠道存在之后
+	probeCfg := req.ProbeIntervalMinutes != nil || req.ProbeModelId != nil
+	probeParams := db.UpdateChannelProbeConfigParams{ID: id}
+	if probeCfg {
+		iv := req.ProbeIntervalMinutes
+		switch {
+		case iv == nil:
+			writeJSON(w, http.StatusBadRequest, api.Error{Error: "探活配置须成对提交（间隔 0 表示关闭）"})
+			return
+		case *iv == 0:
+			// 关闭：interval 与 model 同置空
+		case *iv < 1 || *iv > 1440:
+			writeJSON(w, http.StatusBadRequest, api.Error{Error: "探活间隔须在 1-1440 分钟之间"})
+			return
+		case req.ProbeModelId == nil:
+			writeJSON(w, http.StatusBadRequest, api.Error{Error: "开启定时探活须同时指定探活模型"})
+			return
+		default:
+			if _, err := h.q.GetChannelModel(r.Context(), db.GetChannelModelParams{ID: *req.ProbeModelId, ChannelID: id}); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					writeJSON(w, http.StatusBadRequest, api.Error{Error: "探活模型不属于该渠道"})
+					return
+				}
+				h.log.Error("查询探活模型失败", "err", err)
+				writeJSON(w, http.StatusInternalServerError, api.Error{Error: "服务内部错误"})
+				return
+			}
+			probeParams.ProbeIntervalMinutes = pgtype.Int4{Int32: int32(*iv), Valid: true}
+			probeParams.ProbeModelID = pgtype.UUID{Bytes: *req.ProbeModelId, Valid: true}
+		}
+	}
+
 	n, err := h.q.UpdateChannel(r.Context(), p)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -323,6 +368,13 @@ func (h *handlers) UpdateChannel(w http.ResponseWriter, r *http.Request, id api.
 	if n == 0 {
 		writeJSON(w, http.StatusNotFound, api.Error{Error: "渠道不存在"})
 		return
+	}
+	if probeCfg {
+		if _, err := h.q.UpdateChannelProbeConfig(r.Context(), probeParams); err != nil {
+			h.log.Error("更新探活配置失败", "err", err)
+			writeJSON(w, http.StatusInternalServerError, api.Error{Error: "服务内部错误"})
+			return
+		}
 	}
 	c, err := h.q.GetChannel(r.Context(), id)
 	if err != nil {

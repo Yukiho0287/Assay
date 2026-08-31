@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: Assay API
   description: LLM 渠道检测平台 API。本文件是前后端契约的唯一真相源（契约优先）。
-  version: 0.8.0
+  version: 0.9.0
 servers:
   - url: /api
 paths:
@@ -514,6 +514,58 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /channels/{id}/connectivity/history:
+    get:
+      operationId: getChannelConnectivityHistory
+      summary: 连通历史（登录即可；总览延迟曲线数据源，含手动测试与定时探活两种来源）
+      tags: [channels]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - name: hours
+          in: query
+          description: 回看窗口小时数
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 168
+            default: 24
+      responses:
+        "200":
+          description: 时间升序的历史点列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ConnectivityHistoryPoint"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /overview/channels:
+    get:
+      operationId: listOverviewChannels
+      summary: 总览渠道卡片（登录即可；渠道基本信息 + 各模型最近终态质量任务得分，得分即时计算不持久化）
+      tags: [overview]
+      responses:
+        "200":
+          description: 渠道卡片列表（按创建时间排序）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OverviewChannel"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /system/update:
     get:
       operationId: getUpdateStatus
@@ -1045,6 +1097,15 @@ components:
           type: integer
         lastTest:
           $ref: "#/components/schemas/ConnectivityTest"
+        probeIntervalMinutes:
+          description: 定时探活间隔分钟（1-1440）；缺省=未开启
+          type: integer
+          minimum: 1
+          maximum: 1440
+        probeModelId:
+          description: 定时探活用的模型条目；条目被删自动置空、调度停摆
+          type: string
+          format: uuid
         createdAt:
           type: string
           format: date-time
@@ -1111,6 +1172,15 @@ components:
           maxLength: 500
         disabled:
           type: boolean
+        probeIntervalMinutes:
+          description: 定时探活间隔分钟；须与 probeModelId 成对提交整体覆盖，0=关闭（coalesce 语义写不了 null，故用 0 哨兵）
+          type: integer
+          minimum: 0
+          maximum: 1440
+        probeModelId:
+          description: 定时探活模型条目（须属本渠道）；probeIntervalMinutes=0 时可缺省
+          type: string
+          format: uuid
     ModelEntry:
       type: object
       required: [id, name, createdAt]
@@ -1187,6 +1257,66 @@ components:
         error:
           description: 失败摘要（超时/连接错误/上游错误体截断）
           type: string
+    ConnectivitySource:
+      description: 探测来源：manual=手动测试、scheduled=定时探活
+      type: string
+      enum: [manual, scheduled]
+    ConnectivityHistoryPoint:
+      description: 连通历史点：一行=（一次测试 × 一协议），同次测试各协议行 testedAt 严格一致，前端按其分组还原一次测试
+      type: object
+      required: [testedAt, model, source, protocol, ok]
+      properties:
+        testedAt:
+          type: string
+          format: date-time
+        model:
+          description: 当时探测用的模型名快照
+          type: string
+        source:
+          $ref: "#/components/schemas/ConnectivitySource"
+        protocol:
+          $ref: "#/components/schemas/Protocol"
+        ok:
+          type: boolean
+        ttftMs:
+          description: 首字延迟毫秒；失败时缺省（曲线在此断点留白）
+          type: integer
+    OverviewModelScore:
+      description: 总览卡片单模型得分行：该渠道 × 模型名快照的最近一个终态质量任务即时计算；taskStatus 非 succeeded 时得分基于不完整采样，前端须挂状态标注
+      type: object
+      required: [model, taskId, taskStatus]
+      properties:
+        model:
+          description: 模型名快照（与任务快照、连通历史同口径）
+          type: string
+        modelEntryId:
+          description: 任务快照里的模型条目 id（老任务缺省；用于匹配默认探活模型）
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+        taskStatus:
+          $ref: "#/components/schemas/TaskStatus"
+        finishedAt:
+          type: string
+          format: date-time
+        score:
+          description: 总分 0-100，口径与任务报告一致；无已采样检查点时缺省
+          type: number
+        grade:
+          $ref: "#/components/schemas/Grade"
+    OverviewChannel:
+      allOf:
+        - $ref: "#/components/schemas/Channel"
+        - type: object
+          required: [models]
+          properties:
+            models:
+              description: 有终态质量任务的模型得分行（按模型名去重取最近一次）
+              type: array
+              items:
+                $ref: "#/components/schemas/OverviewModelScore"
     ProbeInfo:
       type: object
       required: [id, name, description, protocols, needsControl, needsPricing, caseCount, requestsPerCase, supportsMaxCases]
@@ -1377,6 +1507,11 @@ components:
         stats:
           description: 聚合统计（仅详情接口返回，任务未产生结果时缺省）
           $ref: "#/components/schemas/TaskStats"
+        score:
+          description: 总分 0-100；仅列表接口对终态任务返回，按当前检查点注册表口径即时计算、绝不持久化；排队/运行中或无已采样检查点时缺省
+          type: number
+        grade:
+          $ref: "#/components/schemas/Grade"
     QualityTaskList:
       type: object
       required: [items, total]
@@ -1417,6 +1552,10 @@ components:
           type: string
         attempts:
           type: integer
+    Grade:
+      description: 评分分级：A ≥95、B ≥80、C ≥60、D <60
+      type: string
+      enum: [A, B, C, D]
     CheckpointScore:
       description: 一个评分检查点的聚合结果；得分 = passed/total × 100（rejected 与 violated 均计失败）
       type: object
@@ -1471,9 +1610,7 @@ components:
           description: 总分 0-100；无任何已采样检查点时缺省
           type: number
         grade:
-          description: 分级：A ≥95、B ≥80、C ≥60、D <60
-          type: string
-          enum: [A, B, C, D]
+          $ref: "#/components/schemas/Grade"
         incomplete:
           description: 任务非正常结束（failed/canceled），评分仅基于已采集数据
           type: boolean

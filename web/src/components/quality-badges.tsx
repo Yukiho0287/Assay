@@ -23,6 +23,33 @@ export function TaskStatusBadge({ status }: { status: TaskStatus }) {
   )
 }
 
+// 评分分级配色：任务列表得分栏、详情页评分板、总览卡片共用同一视觉语言
+export const gradeColor: Record<string, string> = {
+  A: 'text-green-600 dark:text-green-400',
+  B: 'text-lime-600 dark:text-lime-400',
+  C: 'text-amber-600 dark:text-amber-400',
+  D: 'text-red-600 dark:text-red-400',
+}
+
+// ScoreText 得分文本：`95.0 A` 整体按分级着色；无分（非终态/无采样）显示 —
+export function ScoreText({
+  score,
+  grade,
+  className,
+}: {
+  score?: number
+  grade?: string
+  className?: string
+}) {
+  if (score == null) return <span className="text-muted-foreground">—</span>
+  return (
+    <span className={`tabular-nums ${gradeColor[grade ?? ''] ?? ''} ${className ?? ''}`}>
+      {score.toFixed(1)}
+      {grade != null && <span className="ml-1 font-semibold">{grade}</span>}
+    </span>
+  )
+}
+
 const caseStyles: Record<CaseStatus, string> = {
   passed: 'bg-green-500/15 text-green-600 dark:text-green-400',
   rejected: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',

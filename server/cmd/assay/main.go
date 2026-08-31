@@ -14,6 +14,7 @@ import (
 
 	"github.com/Yukiho0287/assay/server/internal/auth"
 	"github.com/Yukiho0287/assay/server/internal/config"
+	"github.com/Yukiho0287/assay/server/internal/connectivity"
 	"github.com/Yukiho0287/assay/server/internal/db"
 	"github.com/Yukiho0287/assay/server/internal/httpserver"
 	"github.com/Yukiho0287/assay/server/internal/tasks"
@@ -112,6 +113,9 @@ func serve() {
 		log.Error("任务 worker 启动失败", "err", err)
 		os.Exit(1)
 	}
+
+	// 定时探活调度器：随 ctx 取消退出，无需显式 Stop
+	go connectivity.NewScheduler(pool, log).Run(ctx)
 
 	log.Info("assay 启动", "version", version.Version)
 	if err := httpserver.New(cfg.Addr, log, pool, gh, tq).Run(ctx, ln); err != nil {

@@ -57,6 +57,24 @@ func (e CaseStatus) Valid() bool {
 	}
 }
 
+// Defines values for ConnectivitySource.
+const (
+	Manual    ConnectivitySource = "manual"
+	Scheduled ConnectivitySource = "scheduled"
+)
+
+// Valid indicates whether the value is a known member of the ConnectivitySource enum.
+func (e ConnectivitySource) Valid() bool {
+	switch e {
+	case Manual:
+		return true
+	case Scheduled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Currency.
 const (
 	CNY Currency = "CNY"
@@ -69,6 +87,30 @@ func (e Currency) Valid() bool {
 	case CNY:
 		return true
 	case USD:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for Grade.
+const (
+	A Grade = "A"
+	B Grade = "B"
+	C Grade = "C"
+	D Grade = "D"
+)
+
+// Valid indicates whether the value is a known member of the Grade enum.
+func (e Grade) Valid() bool {
+	switch e {
+	case A:
+		return true
+	case B:
+		return true
+	case C:
+		return true
+	case D:
 		return true
 	default:
 		return false
@@ -105,30 +147,6 @@ func (e Protocol) Valid() bool {
 	case OpenaiChat:
 		return true
 	case OpenaiResponses:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for QualityReportGrade.
-const (
-	A QualityReportGrade = "A"
-	B QualityReportGrade = "B"
-	C QualityReportGrade = "C"
-	D QualityReportGrade = "D"
-)
-
-// Valid indicates whether the value is a known member of the QualityReportGrade enum.
-func (e QualityReportGrade) Valid() bool {
-	switch e {
-	case A:
-		return true
-	case B:
-		return true
-	case C:
-		return true
-	case D:
 		return true
 	default:
 		return false
@@ -211,7 +229,13 @@ type Channel struct {
 	ModelCount int               `json:"modelCount"`
 	Name       string            `json:"name"`
 	Note       string            `json:"note"`
-	Protocols  []Protocol        `json:"protocols"`
+
+	// ProbeIntervalMinutes 定时探活间隔分钟（1-1440）；缺省=未开启
+	ProbeIntervalMinutes *int `json:"probeIntervalMinutes,omitempty"`
+
+	// ProbeModelId 定时探活用的模型条目；条目被删自动置空、调度停摆
+	ProbeModelId *openapi_types.UUID `json:"probeModelId,omitempty"`
+	Protocols    []Protocol          `json:"protocols"`
 }
 
 // ChannelCreate defines model for ChannelCreate.
@@ -248,7 +272,13 @@ type ChannelDetail struct {
 	Models     []ModelEntry      `json:"models"`
 	Name       string            `json:"name"`
 	Note       string            `json:"note"`
-	Protocols  []Protocol        `json:"protocols"`
+
+	// ProbeIntervalMinutes 定时探活间隔分钟（1-1440）；缺省=未开启
+	ProbeIntervalMinutes *int `json:"probeIntervalMinutes,omitempty"`
+
+	// ProbeModelId 定时探活用的模型条目；条目被删自动置空、调度停摆
+	ProbeModelId *openapi_types.UUID `json:"probeModelId,omitempty"`
+	Protocols    []Protocol          `json:"protocols"`
 }
 
 // ChannelUpdate defines model for ChannelUpdate.
@@ -258,11 +288,17 @@ type ChannelUpdate struct {
 	BaseUrl *string `json:"baseUrl,omitempty"`
 
 	// Currency 渠道定价币种（仅标注，不做汇率换算）
-	Currency  *Currency   `json:"currency,omitempty"`
-	Disabled  *bool       `json:"disabled,omitempty"`
-	Name      *string     `json:"name,omitempty"`
-	Note      *string     `json:"note,omitempty"`
-	Protocols *[]Protocol `json:"protocols,omitempty"`
+	Currency *Currency `json:"currency,omitempty"`
+	Disabled *bool     `json:"disabled,omitempty"`
+	Name     *string   `json:"name,omitempty"`
+	Note     *string   `json:"note,omitempty"`
+
+	// ProbeIntervalMinutes 定时探活间隔分钟；须与 probeModelId 成对提交整体覆盖，0=关闭（coalesce 语义写不了 null，故用 0 哨兵）
+	ProbeIntervalMinutes *int `json:"probeIntervalMinutes,omitempty"`
+
+	// ProbeModelId 定时探活模型条目（须属本渠道）；probeIntervalMinutes=0 时可缺省
+	ProbeModelId *openapi_types.UUID `json:"probeModelId,omitempty"`
+	Protocols    *[]Protocol         `json:"protocols,omitempty"`
 }
 
 // CheckpointScore 一个评分检查点的聚合结果；得分 = passed/total × 100（rejected 与 violated 均计失败）
@@ -282,6 +318,23 @@ type CheckpointScore struct {
 	Weight float32 `json:"weight"`
 }
 
+// ConnectivityHistoryPoint 连通历史点：一行=（一次测试 × 一协议），同次测试各协议行 testedAt 严格一致，前端按其分组还原一次测试
+type ConnectivityHistoryPoint struct {
+	// Model 当时探测用的模型名快照
+	Model string `json:"model"`
+	Ok    bool   `json:"ok"`
+
+	// Protocol 渠道支持的接口协议
+	Protocol Protocol `json:"protocol"`
+
+	// Source 探测来源：manual=手动测试、scheduled=定时探活
+	Source   ConnectivitySource `json:"source"`
+	TestedAt time.Time          `json:"testedAt"`
+
+	// TtftMs 首字延迟毫秒；失败时缺省（曲线在此断点留白）
+	TtftMs *int `json:"ttftMs,omitempty"`
+}
+
 // ConnectivityResult defines model for ConnectivityResult.
 type ConnectivityResult struct {
 	// Error 失败摘要（超时/连接错误/上游错误体截断）
@@ -297,6 +350,9 @@ type ConnectivityResult struct {
 	// TtftMs 首字延迟毫秒（流式首个数据帧到达；失败时缺省）
 	TtftMs *int `json:"ttftMs,omitempty"`
 }
+
+// ConnectivitySource 探测来源：manual=手动测试、scheduled=定时探活
+type ConnectivitySource string
 
 // ConnectivityTest defines model for ConnectivityTest.
 type ConnectivityTest struct {
@@ -336,6 +392,9 @@ type Error struct {
 	Error string `json:"error"`
 }
 
+// Grade 评分分级：A ≥95、B ≥80、C ≥60、D <60
+type Grade string
+
 // Health defines model for Health.
 type Health struct {
 	Status HealthStatus `json:"status"`
@@ -368,6 +427,56 @@ type ModelEntryUpsert struct {
 	InputPrice       *float32 `json:"inputPrice,omitempty"`
 	Name             string   `json:"name"`
 	OutputPrice      *float32 `json:"outputPrice,omitempty"`
+}
+
+// OverviewChannel defines model for OverviewChannel.
+type OverviewChannel struct {
+	// BaseUrl 填到版本段（如 https://api.example.com/v1），平台按协议拼固定末段
+	BaseUrl   string    `json:"baseUrl"`
+	CreatedAt time.Time `json:"createdAt"`
+
+	// Currency 渠道定价币种（仅标注，不做汇率换算）
+	Currency Currency `json:"currency"`
+
+	// Disabled 停用后不可选入新检测任务，配置与 key 保留
+	Disabled bool               `json:"disabled"`
+	Id       openapi_types.UUID `json:"id"`
+
+	// KeyPrefix API key 脱敏前缀（key 写后不可回读）
+	KeyPrefix  string            `json:"keyPrefix"`
+	LastTest   *ConnectivityTest `json:"lastTest,omitempty"`
+	ModelCount int               `json:"modelCount"`
+
+	// Models 有终态质量任务的模型得分行（按模型名去重取最近一次）
+	Models []OverviewModelScore `json:"models"`
+	Name   string               `json:"name"`
+	Note   string               `json:"note"`
+
+	// ProbeIntervalMinutes 定时探活间隔分钟（1-1440）；缺省=未开启
+	ProbeIntervalMinutes *int `json:"probeIntervalMinutes,omitempty"`
+
+	// ProbeModelId 定时探活用的模型条目；条目被删自动置空、调度停摆
+	ProbeModelId *openapi_types.UUID `json:"probeModelId,omitempty"`
+	Protocols    []Protocol          `json:"protocols"`
+}
+
+// OverviewModelScore 总览卡片单模型得分行：该渠道 × 模型名快照的最近一个终态质量任务即时计算；taskStatus 非 succeeded 时得分基于不完整采样，前端须挂状态标注
+type OverviewModelScore struct {
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+
+	// Grade 评分分级：A ≥95、B ≥80、C ≥60、D <60
+	Grade *Grade `json:"grade,omitempty"`
+
+	// Model 模型名快照（与任务快照、连通历史同口径）
+	Model string `json:"model"`
+
+	// ModelEntryId 任务快照里的模型条目 id（老任务缺省；用于匹配默认探活模型）
+	ModelEntryId *openapi_types.UUID `json:"modelEntryId,omitempty"`
+
+	// Score 总分 0-100，口径与任务报告一致；无已采样检查点时缺省
+	Score      *float32           `json:"score,omitempty"`
+	TaskId     openapi_types.UUID `json:"taskId"`
+	TaskStatus TaskStatus         `json:"taskStatus"`
 }
 
 // PermissionMap 粗粒度模块权限开关：控制对应页面与该模块全部接口的访问
@@ -464,8 +573,8 @@ type QualityExport struct {
 type QualityReport struct {
 	GeneratedAt time.Time `json:"generatedAt"`
 
-	// Grade 分级：A ≥95、B ≥80、C ≥60、D <60
-	Grade *QualityReportGrade `json:"grade,omitempty"`
+	// Grade 评分分级：A ≥95、B ≥80、C ≥60、D <60
+	Grade *Grade `json:"grade,omitempty"`
 
 	// Incomplete 任务非正常结束（failed/canceled），评分仅基于已采集数据
 	Incomplete *bool        `json:"incomplete,omitempty"`
@@ -477,9 +586,6 @@ type QualityReport struct {
 	TaskId openapi_types.UUID `json:"taskId"`
 }
 
-// QualityReportGrade 分级：A ≥95、B ≥80、C ≥60、D <60
-type QualityReportGrade string
-
 // QualityTask defines model for QualityTask.
 type QualityTask struct {
 	CreatedAt time.Time `json:"createdAt"`
@@ -488,16 +594,22 @@ type QualityTask struct {
 	CreatedBy *string `json:"createdBy,omitempty"`
 
 	// Error 任务级失败原因（用例级失败不算任务失败）
-	Error         *string            `json:"error,omitempty"`
-	FinishedAt    *time.Time         `json:"finishedAt,omitempty"`
+	Error      *string    `json:"error,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+
+	// Grade 评分分级：A ≥95、B ≥80、C ≥60、D <60
+	Grade         *Grade             `json:"grade,omitempty"`
 	Id            openapi_types.UUID `json:"id"`
 	Params        QualityTaskParams  `json:"params"`
 	Probes        []string           `json:"probes"`
 	ProgressDone  int                `json:"progressDone"`
 	ProgressTotal int                `json:"progressTotal"`
-	StartedAt     *time.Time         `json:"startedAt,omitempty"`
-	Stats         *TaskStats         `json:"stats,omitempty"`
-	Status        TaskStatus         `json:"status"`
+
+	// Score 总分 0-100；仅列表接口对终态任务返回，按当前检查点注册表口径即时计算、绝不持久化；排队/运行中或无已采样检查点时缺省
+	Score     *float32   `json:"score,omitempty"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+	Stats     *TaskStats `json:"stats,omitempty"`
+	Status    TaskStatus `json:"status"`
 
 	// Target 检测对象参数快照（任务创建时定格，不受渠道后续编辑/删除影响；绝不含 API key）
 	Target TaskTarget `json:"target"`
@@ -661,6 +773,12 @@ type NotFound = Error
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
 
+// GetChannelConnectivityHistoryParams defines parameters for GetChannelConnectivityHistory.
+type GetChannelConnectivityHistoryParams struct {
+	// Hours 回看窗口小时数
+	Hours *int `form:"hours,omitempty" json:"hours,omitempty"`
+}
+
 // ListQualityTasksParams defines parameters for ListQualityTasks.
 type ListQualityTasksParams struct {
 	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
@@ -754,6 +872,9 @@ type ServerInterface interface {
 	// UpdateChannel 修改渠道基本信息（需 channels 权限；apiKey 缺省=不改、给值=覆盖，写后不可回读）
 	// (PATCH /channels/{id})
 	UpdateChannel(w http.ResponseWriter, r *http.Request, id IdPath)
+	// GetChannelConnectivityHistory 连通历史（登录即可；总览延迟曲线数据源，含手动测试与定时探活两种来源）
+	// (GET /channels/{id}/connectivity/history)
+	GetChannelConnectivityHistory(w http.ResponseWriter, r *http.Request, id IdPath, params GetChannelConnectivityHistoryParams)
 	// AddChannelModel 添加模型条目（需 channels 权限）
 	// (POST /channels/{id}/models)
 	AddChannelModel(w http.ResponseWriter, r *http.Request, id IdPath)
@@ -769,6 +890,9 @@ type ServerInterface interface {
 	// GetHealthz 健康检查
 	// (GET /healthz)
 	GetHealthz(w http.ResponseWriter, r *http.Request)
+	// ListOverviewChannels 总览渠道卡片（登录即可；渠道基本信息 + 各模型最近终态质量任务得分，得分即时计算不持久化）
+	// (GET /overview/channels)
+	ListOverviewChannels(w http.ResponseWriter, r *http.Request)
 	// ListProbes 检测项注册表（需 quality 权限；含元数据供发起页勾选）
 	// (GET /probes)
 	ListProbes(w http.ResponseWriter, r *http.Request)
@@ -1002,6 +1126,48 @@ func (siw *ServerInterfaceWrapper) UpdateChannel(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetChannelConnectivityHistory operation middleware
+func (siw *ServerInterfaceWrapper) GetChannelConnectivityHistory(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id IdPath
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetChannelConnectivityHistoryParams
+
+	// ------------- Optional query parameter "hours" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "hours", r.URL.Query(), &params.Hours, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "hours"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hours", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetChannelConnectivityHistory(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // AddChannelModel operation middleware
 func (siw *ServerInterfaceWrapper) AddChannelModel(w http.ResponseWriter, r *http.Request) {
 
@@ -1129,6 +1295,20 @@ func (siw *ServerInterfaceWrapper) GetHealthz(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealthz(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListOverviewChannels operation middleware
+func (siw *ServerInterfaceWrapper) ListOverviewChannels(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListOverviewChannels(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1771,6 +1951,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/channels/{id}/models/{modelId}", wrapper.DeleteChannelModel)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/channels/{id}/models/{modelId}", wrapper.UpdateChannelModel)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/channels/{id}/test", wrapper.TestChannel)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/channels/{id}/connectivity/history", wrapper.GetChannelConnectivityHistory)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/overview/channels", wrapper.ListOverviewChannels)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/system/update", wrapper.GetUpdateStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/system/update/deploy", wrapper.TriggerDeploy)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/probes", wrapper.ListProbes)

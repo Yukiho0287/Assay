@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Yukiho0287/assay/server/internal/api"
 	"github.com/Yukiho0287/assay/server/internal/db"
@@ -107,24 +110,70 @@ func (h *handlers) loadTerminalTaskWithResults(w http.ResponseWriter, r *http.Re
 	return task, rows, true
 }
 
-// buildReport 从用例行即时计算评分板：检查点得分 = 命中用例 passed 占比，
-// 检测项得分 = 检查点按权重加权平均，总分 = 各检测项等权平均。
-// collected 行（仅取消的任务可能残留）不是判定结论，不参与计数——导出的原始行里仍完整保留。
+// buildReport 从用例行即时计算评分板，数学在 scoreProbes；此处只做行→计数转换与报告组装。
 func buildReport(task db.GetTaskRow, rows []db.ListTaskCaseResultsRow) api.QualityReport {
 	report := api.QualityReport{
 		TaskId:      task.ID,
 		Status:      api.TaskStatus(task.Status),
-		Probes:      make([]api.ProbeScore, 0, len(task.Probes)),
 		GeneratedAt: time.Now().UTC(),
 	}
 	if task.Status != "succeeded" {
 		v := true
 		report.Incomplete = &v
 	}
+	counts := make([]caseCount, 0, len(rows))
+	for _, row := range rows {
+		counts = append(counts, caseCount{Probe: row.Probe, Suite: row.Suite, Mode: row.Mode, Status: row.Status, N: 1})
+	}
+	report.Probes, report.Score, report.Grade = scoreProbes(task.Probes, counts)
+	return report
+}
 
+// fillTaskScores 为列表中的终态任务批量填充总分：一条 GROUP BY 聚合 SQL + 共享评分内核，
+// 与详情页评分板同一口径；即时计算不持久化。非终态任务保持缺省。
+func (h *handlers) fillTaskScores(ctx context.Context, items []api.QualityTask) error {
+	ids := make([]uuid.UUID, 0, len(items))
+	for _, t := range items {
+		if isTerminalTask(string(t.Status)) {
+			ids = append(ids, t.Id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.AggregateCaseResultsByTaskIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	counts := make(map[uuid.UUID][]caseCount, len(ids))
+	for _, r := range rows {
+		counts[r.TaskID] = append(counts[r.TaskID],
+			caseCount{Probe: r.Probe, Suite: r.Suite, Mode: r.Mode, Status: r.Status, N: int(r.N)})
+	}
+	for i := range items {
+		if !isTerminalTask(string(items[i].Status)) {
+			continue
+		}
+		_, items[i].Score, items[i].Grade = scoreProbes(items[i].Probes, counts[items[i].Id])
+	}
+	return nil
+}
+
+// caseCount 一组同 (probe, suite, mode, status) 用例的计数；行路径按 N=1 逐行传入，
+// 批量路径（任务列表/总览）由 GROUP BY 聚合直接喂入。
+type caseCount struct {
+	Probe, Suite, Mode, Status string
+	N                          int
+}
+
+// scoreProbes 评分数学的唯一实现：检查点得分 = 命中用例 passed 占比 ×100
+//（rejected 与 violated 均计失败；collected 不是判定结论，不参与计数），
+// 检测项得分 = 检查点按权重加权平均（total=0 的未采样检查点不参与），总分 = 各检测项等权平均。
+func scoreProbes(probeIDs []string, counts []caseCount) (probes []api.ProbeScore, overall *float32, grade *api.Grade) {
+	probes = make([]api.ProbeScore, 0, len(probeIDs))
 	var probeScoreSum float64
 	var probeScoreN int
-	for _, probeID := range task.Probes {
+	for _, probeID := range probeIDs {
 		ps := api.ProbeScore{ProbeId: probeID, ProbeName: probeID}
 		var cps []probe.Checkpoint
 		if p, ok := registry.Get(probeID); ok {
@@ -136,21 +185,21 @@ func buildReport(task db.GetTaskRow, rows []db.ListTaskCaseResultsRow) api.Quali
 		var weighted, weightSum float64
 		for _, cp := range cps {
 			cs := api.CheckpointScore{Id: cp.ID, Name: cp.Name, Weight: float32(cp.Weight)}
-			for _, row := range rows {
-				if row.Probe != probeID || !cp.Matches(row.Suite, row.Mode) {
+			for _, c := range counts {
+				if c.Probe != probeID || !cp.Matches(c.Suite, c.Mode) {
 					continue
 				}
-				switch row.Status {
+				switch c.Status {
 				case probe.StatusPassed:
-					cs.Passed++
+					cs.Passed += c.N
 				case probe.StatusRejected:
-					cs.Rejected++
+					cs.Rejected += c.N
 				case probe.StatusViolated:
-					cs.Violated++
+					cs.Violated += c.N
 				default:
 					continue // collected：未评估，不计入
 				}
-				cs.Total++
+				cs.Total += c.N
 			}
 			if cs.Total > 0 {
 				score := round1(float64(cs.Passed) / float64(cs.Total) * 100)
@@ -166,23 +215,22 @@ func buildReport(task db.GetTaskRow, rows []db.ListTaskCaseResultsRow) api.Quali
 			probeScoreSum += float64(score)
 			probeScoreN++
 		}
-		report.Probes = append(report.Probes, ps)
+		probes = append(probes, ps)
 	}
-
 	if probeScoreN > 0 {
-		overall := round1(probeScoreSum / float64(probeScoreN))
-		report.Score = &overall
-		grade := gradeOf(float64(overall))
-		report.Grade = &grade
+		v := round1(probeScoreSum / float64(probeScoreN))
+		overall = &v
+		g := gradeOf(float64(v))
+		grade = &g
 	}
-	return report
+	return probes, overall, grade
 }
 
 func round1(v float64) float32 {
 	return float32(math.Round(v*10) / 10)
 }
 
-func gradeOf(score float64) api.QualityReportGrade {
+func gradeOf(score float64) api.Grade {
 	switch {
 	case score >= 95:
 		return api.A

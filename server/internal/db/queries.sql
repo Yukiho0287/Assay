@@ -85,14 +85,14 @@ delete from sessions where expires_at <= now();
 
 -- name: ListChannels :many
 select c.id, c.name, c.base_url, c.key_prefix, c.protocols, c.currency, c.note,
-       c.disabled, c.last_test, c.created_at,
+       c.disabled, c.last_test, c.probe_interval_minutes, c.probe_model_id, c.created_at,
        (select count(*) from channel_models m where m.channel_id = c.id) as model_count
 from channels c
 order by c.created_at;
 
 -- name: GetChannel :one
 select c.id, c.name, c.base_url, c.key_prefix, c.protocols, c.currency, c.note,
-       c.disabled, c.last_test, c.created_at,
+       c.disabled, c.last_test, c.probe_interval_minutes, c.probe_model_id, c.created_at,
        (select count(*) from channel_models m where m.channel_id = c.id) as model_count
 from channels c
 where c.id = $1;
@@ -244,3 +244,56 @@ select mode as bucket_mode, selection_reason as bucket_reason, status, count(*) 
 from task_case_results
 where task_id = $1
 group by mode, selection_reason, status;
+
+-- name: AggregateCaseResultsByTaskIDs :many
+-- 列表页/总览批量评分：一条 SQL 拿回一批任务的分组计数，Go 侧按检查点加权，
+-- 避免逐任务全量捞用例行（408 行 × 20 任务）
+select task_id, probe, suite, mode, status, count(*) as n
+from task_case_results
+where task_id = any (sqlc.arg('task_ids')::uuid[])
+group by task_id, probe, suite, mode, status;
+
+-- name: InsertConnectivityResult :exec
+insert into connectivity_results
+    (channel_id, model, source, protocol, ok, http_status, ttft_ms, error, tested_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+
+-- name: ListConnectivityHistory :many
+select model, source, protocol, ok, http_status, ttft_ms, error, tested_at
+from connectivity_results
+where channel_id = $1
+  and tested_at >= now() - make_interval(hours => sqlc.arg('hours')::int)
+order by tested_at;
+
+-- name: DeleteOldConnectivityResults :execrows
+-- 历史保留 7 天：曲线窗口最长 168 小时，更久的数据无消费方
+delete from connectivity_results where tested_at < now() - interval '7 days';
+
+-- name: ListDueProbeChannels :many
+-- 定时探活到期渠道：已配置间隔 + 未停用 + 探活模型仍在（被删则 join 不到自动停摆）；
+-- 节奏只看最近一次 scheduled 探测（手动测试不重置定时），从未跑过视为立即到期
+select c.id, m.name as model_name
+from channels c
+join channel_models m on m.id = c.probe_model_id
+where c.probe_interval_minutes is not null
+  and not c.disabled
+  and coalesce(
+        (select max(r.tested_at) from connectivity_results r
+         where r.channel_id = c.id and r.source = 'scheduled'),
+        '-infinity'::timestamptz
+      ) <= now() - make_interval(mins => c.probe_interval_minutes);
+
+-- name: UpdateChannelProbeConfig :execrows
+-- 探活配置成对整体覆盖（可写 null = 关闭）：UpdateChannel 的 coalesce(narg) 写不了 null，故专设
+update channels set probe_interval_minutes = $2, probe_model_id = $3 where id = $1;
+
+-- name: ListLatestTerminalQualityTasks :many
+-- 总览评分：每个 渠道 × 模型名快照 取最近一个终态质量任务；
+-- 按 target->>'model' 名快照分组（老任务快照无 modelEntryId），与 connectivity_results.model 口径一致
+select distinct on (t.channel_id, t.target->>'model')
+    t.id, t.channel_id, t.status, t.target, t.probes, t.finished_at
+from tasks t
+where t.kind = 'quality'
+  and t.channel_id is not null
+  and t.status in ('succeeded', 'failed', 'canceled')
+order by t.channel_id, t.target->>'model', t.created_at desc;

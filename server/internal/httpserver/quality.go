@@ -228,6 +228,10 @@ func (h *handlers) ListQualityTasks(w http.ResponseWriter, r *http.Request, para
 		}
 		items = append(items, t)
 	}
+	if err := h.fillTaskScores(r.Context(), items); err != nil {
+		h.internalError(w, "计算任务得分失败", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, api.QualityTaskList{Items: items, Total: int(total)})
 }
 

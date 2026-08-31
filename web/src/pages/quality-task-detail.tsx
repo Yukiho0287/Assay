@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ChevronDown, FileCode, FileJson, Loader2, RotateCcw, X } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router'
 import { errText } from '@/components/channel-form-dialog'
-import { CaseStatusBadge, TaskStatusBadge } from '@/components/quality-badges'
+import { CaseStatusBadge, gradeColor, TaskStatusBadge } from '@/components/quality-badges'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -240,14 +240,6 @@ export default function QualityTaskDetailPage() {
       </Dialog>
     </div>
   )
-}
-
-// 分级 → 颜色：与用例状态色系一致（绿=好、琥珀=中、红=差）
-const gradeColor: Record<string, string> = {
-  A: 'text-green-600 dark:text-green-400',
-  B: 'text-lime-600 dark:text-lime-400',
-  C: 'text-amber-600 dark:text-amber-400',
-  D: 'text-red-600 dark:text-red-400',
 }
 
 // ScoreboardCard 评分板：检查点 + 权重模型的展示层，原始判定以用例结果表为准

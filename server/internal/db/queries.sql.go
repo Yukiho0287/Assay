@@ -13,6 +13,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const aggregateCaseResultsByTaskIDs = `-- name: AggregateCaseResultsByTaskIDs :many
+select task_id, probe, suite, mode, status, count(*) as n
+from task_case_results
+where task_id = any ($1::uuid[])
+group by task_id, probe, suite, mode, status
+`
+
+type AggregateCaseResultsByTaskIDsRow struct {
+	TaskID uuid.UUID
+	Probe  string
+	Suite  string
+	Mode   string
+	Status string
+	N      int64
+}
+
+// 列表页/总览批量评分：一条 SQL 拿回一批任务的分组计数，Go 侧按检查点加权，
+// 避免逐任务全量捞用例行（408 行 × 20 任务）
+func (q *Queries) AggregateCaseResultsByTaskIDs(ctx context.Context, taskIds []uuid.UUID) ([]AggregateCaseResultsByTaskIDsRow, error) {
+	rows, err := q.db.Query(ctx, aggregateCaseResultsByTaskIDs, taskIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AggregateCaseResultsByTaskIDsRow
+	for rows.Next() {
+		var i AggregateCaseResultsByTaskIDsRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.Probe,
+			&i.Suite,
+			&i.Mode,
+			&i.Status,
+			&i.N,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const aggregateTaskCaseResults = `-- name: AggregateTaskCaseResults :many
 select mode as bucket_mode, selection_reason as bucket_reason, status, count(*) as n
 from task_case_results
@@ -325,6 +370,19 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const deleteOldConnectivityResults = `-- name: DeleteOldConnectivityResults :execrows
+delete from connectivity_results where tested_at < now() - interval '7 days'
+`
+
+// 历史保留 7 天：曲线窗口最长 168 小时，更久的数据无消费方
+func (q *Queries) DeleteOldConnectivityResults(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldConnectivityResults)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOtherUserSessions = `-- name: DeleteOtherUserSessions :exec
 delete from sessions where user_id = $1 and token_hash <> $2
 `
@@ -431,24 +489,26 @@ func (q *Queries) FinishTask(ctx context.Context, arg FinishTaskParams) (int64, 
 
 const getChannel = `-- name: GetChannel :one
 select c.id, c.name, c.base_url, c.key_prefix, c.protocols, c.currency, c.note,
-       c.disabled, c.last_test, c.created_at,
+       c.disabled, c.last_test, c.probe_interval_minutes, c.probe_model_id, c.created_at,
        (select count(*) from channel_models m where m.channel_id = c.id) as model_count
 from channels c
 where c.id = $1
 `
 
 type GetChannelRow struct {
-	ID         uuid.UUID
-	Name       string
-	BaseUrl    string
-	KeyPrefix  string
-	Protocols  []string
-	Currency   string
-	Note       string
-	Disabled   bool
-	LastTest   []byte
-	CreatedAt  time.Time
-	ModelCount int64
+	ID                   uuid.UUID
+	Name                 string
+	BaseUrl              string
+	KeyPrefix            string
+	Protocols            []string
+	Currency             string
+	Note                 string
+	Disabled             bool
+	LastTest             []byte
+	ProbeIntervalMinutes pgtype.Int4
+	ProbeModelID         pgtype.UUID
+	CreatedAt            time.Time
+	ModelCount           int64
 }
 
 func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (GetChannelRow, error) {
@@ -464,6 +524,8 @@ func (q *Queries) GetChannel(ctx context.Context, id uuid.UUID) (GetChannelRow, 
 		&i.Note,
 		&i.Disabled,
 		&i.LastTest,
+		&i.ProbeIntervalMinutes,
+		&i.ProbeModelID,
 		&i.CreatedAt,
 		&i.ModelCount,
 	)
@@ -710,6 +772,39 @@ func (q *Queries) GetUserPasswordHash(ctx context.Context, id uuid.UUID) (string
 	return password_hash, err
 }
 
+const insertConnectivityResult = `-- name: InsertConnectivityResult :exec
+insert into connectivity_results
+    (channel_id, model, source, protocol, ok, http_status, ttft_ms, error, tested_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+`
+
+type InsertConnectivityResultParams struct {
+	ChannelID  uuid.UUID
+	Model      string
+	Source     string
+	Protocol   string
+	Ok         bool
+	HttpStatus pgtype.Int4
+	TtftMs     pgtype.Int4
+	Error      *string
+	TestedAt   time.Time
+}
+
+func (q *Queries) InsertConnectivityResult(ctx context.Context, arg InsertConnectivityResultParams) error {
+	_, err := q.db.Exec(ctx, insertConnectivityResult,
+		arg.ChannelID,
+		arg.Model,
+		arg.Source,
+		arg.Protocol,
+		arg.Ok,
+		arg.HttpStatus,
+		arg.TtftMs,
+		arg.Error,
+		arg.TestedAt,
+	)
+	return err
+}
+
 const listChannelModels = `-- name: ListChannelModels :many
 select id, name, input_price, output_price, cached_input_price, created_at
 from channel_models
@@ -755,24 +850,26 @@ func (q *Queries) ListChannelModels(ctx context.Context, channelID uuid.UUID) ([
 
 const listChannels = `-- name: ListChannels :many
 select c.id, c.name, c.base_url, c.key_prefix, c.protocols, c.currency, c.note,
-       c.disabled, c.last_test, c.created_at,
+       c.disabled, c.last_test, c.probe_interval_minutes, c.probe_model_id, c.created_at,
        (select count(*) from channel_models m where m.channel_id = c.id) as model_count
 from channels c
 order by c.created_at
 `
 
 type ListChannelsRow struct {
-	ID         uuid.UUID
-	Name       string
-	BaseUrl    string
-	KeyPrefix  string
-	Protocols  []string
-	Currency   string
-	Note       string
-	Disabled   bool
-	LastTest   []byte
-	CreatedAt  time.Time
-	ModelCount int64
+	ID                   uuid.UUID
+	Name                 string
+	BaseUrl              string
+	KeyPrefix            string
+	Protocols            []string
+	Currency             string
+	Note                 string
+	Disabled             bool
+	LastTest             []byte
+	ProbeIntervalMinutes pgtype.Int4
+	ProbeModelID         pgtype.UUID
+	CreatedAt            time.Time
+	ModelCount           int64
 }
 
 func (q *Queries) ListChannels(ctx context.Context) ([]ListChannelsRow, error) {
@@ -794,8 +891,151 @@ func (q *Queries) ListChannels(ctx context.Context) ([]ListChannelsRow, error) {
 			&i.Note,
 			&i.Disabled,
 			&i.LastTest,
+			&i.ProbeIntervalMinutes,
+			&i.ProbeModelID,
 			&i.CreatedAt,
 			&i.ModelCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listConnectivityHistory = `-- name: ListConnectivityHistory :many
+select model, source, protocol, ok, http_status, ttft_ms, error, tested_at
+from connectivity_results
+where channel_id = $1
+  and tested_at >= now() - make_interval(hours => $2::int)
+order by tested_at
+`
+
+type ListConnectivityHistoryParams struct {
+	ChannelID uuid.UUID
+	Hours     int32
+}
+
+type ListConnectivityHistoryRow struct {
+	Model      string
+	Source     string
+	Protocol   string
+	Ok         bool
+	HttpStatus pgtype.Int4
+	TtftMs     pgtype.Int4
+	Error      *string
+	TestedAt   time.Time
+}
+
+func (q *Queries) ListConnectivityHistory(ctx context.Context, arg ListConnectivityHistoryParams) ([]ListConnectivityHistoryRow, error) {
+	rows, err := q.db.Query(ctx, listConnectivityHistory, arg.ChannelID, arg.Hours)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListConnectivityHistoryRow
+	for rows.Next() {
+		var i ListConnectivityHistoryRow
+		if err := rows.Scan(
+			&i.Model,
+			&i.Source,
+			&i.Protocol,
+			&i.Ok,
+			&i.HttpStatus,
+			&i.TtftMs,
+			&i.Error,
+			&i.TestedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDueProbeChannels = `-- name: ListDueProbeChannels :many
+select c.id, m.name as model_name
+from channels c
+join channel_models m on m.id = c.probe_model_id
+where c.probe_interval_minutes is not null
+  and not c.disabled
+  and coalesce(
+        (select max(r.tested_at) from connectivity_results r
+         where r.channel_id = c.id and r.source = 'scheduled'),
+        '-infinity'::timestamptz
+      ) <= now() - make_interval(mins => c.probe_interval_minutes)
+`
+
+type ListDueProbeChannelsRow struct {
+	ID        uuid.UUID
+	ModelName string
+}
+
+// 定时探活到期渠道：已配置间隔 + 未停用 + 探活模型仍在（被删则 join 不到自动停摆）；
+// 节奏只看最近一次 scheduled 探测（手动测试不重置定时），从未跑过视为立即到期
+func (q *Queries) ListDueProbeChannels(ctx context.Context) ([]ListDueProbeChannelsRow, error) {
+	rows, err := q.db.Query(ctx, listDueProbeChannels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDueProbeChannelsRow
+	for rows.Next() {
+		var i ListDueProbeChannelsRow
+		if err := rows.Scan(&i.ID, &i.ModelName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLatestTerminalQualityTasks = `-- name: ListLatestTerminalQualityTasks :many
+select distinct on (t.channel_id, t.target->>'model')
+    t.id, t.channel_id, t.status, t.target, t.probes, t.finished_at
+from tasks t
+where t.kind = 'quality'
+  and t.channel_id is not null
+  and t.status in ('succeeded', 'failed', 'canceled')
+order by t.channel_id, t.target->>'model', t.created_at desc
+`
+
+type ListLatestTerminalQualityTasksRow struct {
+	ID         uuid.UUID
+	ChannelID  pgtype.UUID
+	Status     string
+	Target     []byte
+	Probes     []string
+	FinishedAt pgtype.Timestamptz
+}
+
+// 总览评分：每个 渠道 × 模型名快照 取最近一个终态质量任务；
+// 按 target->>'model' 名快照分组（老任务快照无 modelEntryId），与 connectivity_results.model 口径一致
+func (q *Queries) ListLatestTerminalQualityTasks(ctx context.Context) ([]ListLatestTerminalQualityTasksRow, error) {
+	rows, err := q.db.Query(ctx, listLatestTerminalQualityTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestTerminalQualityTasksRow
+	for rows.Next() {
+		var i ListLatestTerminalQualityTasksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChannelID,
+			&i.Status,
+			&i.Target,
+			&i.Probes,
+			&i.FinishedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1187,6 +1427,25 @@ func (q *Queries) UpdateChannelModel(ctx context.Context, arg UpdateChannelModel
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const updateChannelProbeConfig = `-- name: UpdateChannelProbeConfig :execrows
+update channels set probe_interval_minutes = $2, probe_model_id = $3 where id = $1
+`
+
+type UpdateChannelProbeConfigParams struct {
+	ID                   uuid.UUID
+	ProbeIntervalMinutes pgtype.Int4
+	ProbeModelID         pgtype.UUID
+}
+
+// 探活配置成对整体覆盖（可写 null = 关闭）：UpdateChannel 的 coalesce(narg) 写不了 null，故专设
+func (q *Queries) UpdateChannelProbeConfig(ctx context.Context, arg UpdateChannelProbeConfigParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateChannelProbeConfig, arg.ID, arg.ProbeIntervalMinutes, arg.ProbeModelID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateRole = `-- name: UpdateRole :one

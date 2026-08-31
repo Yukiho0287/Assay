@@ -34,6 +34,9 @@ export type TaskProgressEvent = components['schemas']['TaskProgressEvent']
 export type QualityReport = components['schemas']['QualityReport']
 export type ProbeScore = components['schemas']['ProbeScore']
 export type CheckpointScore = components['schemas']['CheckpointScore']
+export type OverviewChannel = components['schemas']['OverviewChannel']
+export type OverviewModelScore = components['schemas']['OverviewModelScore']
+export type ConnectivityHistoryPoint = components['schemas']['ConnectivityHistoryPoint']
 
 // 统一请求封装：非 2xx 抛出带后端 error 文案的异常
 export class RequestError extends Error {
@@ -122,6 +125,14 @@ export const channelsApi = {
       method: 'POST',
       body: JSON.stringify({ modelId }),
     }),
+  connectivityHistory: (id: string, hours?: number) =>
+    request<{ items: ConnectivityHistoryPoint[] }>(
+      `/api/channels/${id}/connectivity/history${hours ? `?hours=${hours}` : ''}`,
+    ),
+}
+
+export const overviewApi = {
+  channels: () => request<{ items: OverviewChannel[] }>('/api/overview/channels'),
 }
 
 export const probesApi = {
