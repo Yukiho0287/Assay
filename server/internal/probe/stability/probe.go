@@ -1,0 +1,184 @@
+package stability
+
+import (
+	"context"
+	"net/http"
+	"sync/atomic"
+	"time"
+
+	"github.com/Yukiho0287/assay/server/internal/probe"
+	"github.com/Yukiho0287/assay/server/internal/probe/protocol"
+)
+
+// Info 稳定性检测项元数据，与 api.StabilityProbeInfo 对应。无 Checkpoints
+// （稳定性产出的是指标非 pass/fail），registry 只校验 ID 唯一/非空。
+type Info struct {
+	ID          string
+	Name        string
+	Description string
+	Protocols   []string // 适用协议（nil = 全适用）
+	// EstRequests 给定参数的最坏预估请求数（算 progress_total + 成本预估上界）
+	EstRequests func(p StabilityParams) int
+}
+
+// Probe 一个稳定性检测项：元数据 + 运行入口（对齐 quality 的纯结构体范式）。
+type Probe struct {
+	Info Info
+	Run  func(ctx context.Context, in RunInput) error
+}
+
+// RunInput 稳定性 probe 运行所需输入；回调由 worker 提供（落库 + 进度）。
+type RunInput struct {
+	Probe  string // 当前 probe ID，填入 Sample/StageMetrics
+	Target probe.Target
+	APIKey string // 执行时现读，绝不进快照
+	Params StabilityParams
+	Client *http.Client
+	Codec  protocol.Codec
+	Caps   *CapGuard // 全局硬闸（跨 probe 共享），nil = 不限
+
+	// Sample 每次压测请求出结果立即回调（逐样本落 stability_samples，实时证据）
+	Sample func(ctx context.Context, s Sample) error
+	// Metric 每档（及 __overall__）评估完回调（落 stability_metrics）
+	Metric func(ctx context.Context, m StageMetrics) error
+	// Progress 每完成一个请求回调（写进度 + pg_notify）
+	Progress func(ctx context.Context, done, total int)
+}
+
+// Sample 一次压测请求的观测结果，对应 stability_samples 一行。
+// 失败样本的延迟/计量字段取负值（<0），落库时转 SQL NULL —— 报告里
+// 区分「没测到」与「测到 0」。
+type Sample struct {
+	Stage        string
+	StageIndex   int
+	Seq          int
+	Protocol     string
+	DispatchedAt time.Time
+	Warmup       bool
+
+	Ok         bool
+	HTTPStatus int    // 0 = 传输层未拿到状态 → NULL
+	ErrorClass string // "" = 成功 → NULL
+	Error      string // "" → NULL
+
+	TTFBms  int // <0 → NULL
+	TTFTms  int // <0 → NULL
+	TotalMs int // <0 → NULL
+
+	InputTokens  int // <0 = 无 usage → NULL
+	OutputTokens int // <0 = 无 usage → NULL
+}
+
+// 错误分类（与迁移 check 约束一致）
+const (
+	ErrTransport     = "transport"      // 连接/超时，未拿到 HTTP 状态
+	ErrHTTP4xx       = "http_4xx"       // 4xx（非 429）
+	ErrRateLimited   = "rate_limited"   // 429
+	ErrHTTP5xx       = "http_5xx"       // 5xx
+	ErrStreamAnomaly = "stream_anomaly" // 流式分片坏损/读流中断
+	ErrSemanticEmpty = "semantic_empty" // 200 但无任何内容
+)
+
+// StageOverall __overall__ 档标识 + 其排序序号（排在所有真实档之后）
+const (
+	StageOverall      = "__overall__"
+	StageOverallIndex = -1
+)
+
+// Percentiles 一组延迟观测的分位数摘要（评估期确定性计算）
+type Percentiles struct {
+	P50 int     `json:"p50"`
+	P95 int     `json:"p95"`
+	P99 int     `json:"p99"`
+	Min int     `json:"min"`
+	Max int     `json:"max"`
+	Avg float64 `json:"avg"`
+}
+
+// Metrics 一个（probe × 档位）的指标集，序列化进 stability_metrics.metrics jsonb。
+type Metrics struct {
+	Requests  int     `json:"requests"`
+	Errors    int     `json:"errors"`
+	ErrorRate float64 `json:"errorRate"`
+
+	TTFTms *Percentiles `json:"ttftMs,omitempty"`
+	TTFBms *Percentiles `json:"ttfbMs,omitempty"`
+	TotalMs *Percentiles `json:"totalMs,omitempty"`
+
+	ThroughputRps float64 `json:"throughputRps,omitempty"`
+	TokensPerSec  float64 `json:"tokensPerSec,omitempty"`
+
+	ByErrorClass map[string]int `json:"byErrorClass,omitempty"`
+
+	// Concurrency 阶梯并发档的并发数（其它 probe 留 0，omitempty）
+	Concurrency int `json:"concurrency,omitempty"`
+
+	// —— RPM/TPM 开环速率发现（阶梯并发 probe 留空）——
+	TargetRate   float64 `json:"targetRate,omitempty"`   // 档级：目标到达率 req/s
+	AchievedRate float64 `json:"achievedRate,omitempty"` // 档级：实际达成到达率 req/s（在途封顶会低于目标）
+	RateLimited  bool    `json:"rateLimited,omitempty"`  // 档级：本档 429 占比是否判定为触发限速
+	ConvergedRpm float64 `json:"convergedRpm,omitempty"` // __overall__：收敛的可持续 RPM 边界（req/min）
+	ReachedCap   bool    `json:"reachedCap,omitempty"`   // __overall__：探到速率护栏顶仍未限速（真实边界≥护栏）
+
+	// —— TPM 开环 token 速率发现（仅 tpm_probe）——
+	TargetTokenRate   float64 `json:"targetTokenRate,omitempty"`   // 档级：目标 token 到达率 token/s
+	AchievedTokenRate float64 `json:"achievedTokenRate,omitempty"` // 档级：实测 token 吞吐 token/s（输入+输出）
+	ConvergedTpm      float64 `json:"convergedTpm,omitempty"`      // __overall__：收敛的可持续 TPM 边界（token/min）
+
+	// RateLimitHeaders 最近一次响应携带的限速头快照（x-ratelimit-*/anthropic-ratelimit-*/retry-after）
+	RateLimitHeaders map[string]string `json:"rateLimitHeaders,omitempty"`
+}
+
+// StageMetrics 一档评估结果 + 定位信息，worker 据此落 stability_metrics。
+type StageMetrics struct {
+	Probe      string
+	Stage      string
+	StageIndex int
+	Metrics    Metrics
+}
+
+// CapGuard 全局成本硬闸：跨 probe 累计请求数与 token 数，碰上限即令 probe 收敛停止。
+// 尽力而为上界（并发下可能略微超出被占用的那一批），非精确配额。
+type CapGuard struct {
+	maxReq int64
+	maxTok int64
+	reqs   int64 // atomic
+	toks   int64 // atomic
+}
+
+// NewCapGuard 建硬闸；上限 <=0 视为不限（用 math.MaxInt64 兜底）。
+func NewCapGuard(maxReq, maxTok int) *CapGuard {
+	big := int64(1) << 62
+	mr, mt := int64(maxReq), int64(maxTok)
+	if mr <= 0 {
+		mr = big
+	}
+	if mt <= 0 {
+		mt = big
+	}
+	return &CapGuard{maxReq: mr, maxTok: mt}
+}
+
+// Reserve 占用一个请求配额；返回 false 表示已达请求上限，不应再发。
+func (c *CapGuard) Reserve() bool {
+	if c == nil {
+		return true
+	}
+	return atomic.AddInt64(&c.reqs, 1) <= c.maxReq
+}
+
+// AddTokens 累加实际消耗 token
+func (c *CapGuard) AddTokens(n int64) {
+	if c == nil || n <= 0 {
+		return
+	}
+	atomic.AddInt64(&c.toks, n)
+}
+
+// TokensExceeded 是否已超 token 上限
+func (c *CapGuard) TokensExceeded() bool {
+	if c == nil {
+		return false
+	}
+	return atomic.LoadInt64(&c.toks) > c.maxTok
+}

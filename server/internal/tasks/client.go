@@ -18,6 +18,9 @@ import (
 	"github.com/Yukiho0287/assay/server/internal/db"
 )
 
+// QueueStability 稳定性任务的独立 River 队列名（与质量任务队列并行、各自内部串行）。
+const QueueStability = "stability"
+
 // Client 封装 River 队列：入队（与任务行同事务）、取消、启动/停机、孤儿清扫。
 type Client struct {
 	river *river.Client[pgx.Tx]
@@ -38,9 +41,19 @@ func New(pool *pgxpool.Pool, log *slog.Logger) (*Client, error) {
 		log:    log,
 		client: workerHTTPClient(),
 	})
+	river.AddWorker(workers, &StabilityWorker{
+		pool:   pool,
+		q:      q,
+		log:    log,
+		client: workerHTTPClient(),
+	})
 
 	rc, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
-		Queues:  map[string]river.QueueConfig{river.QueueDefault: {MaxWorkers: 1}},
+		// 质量 / 稳定性两条独立队列各 MaxWorkers=1：两大类可并行，各自内部串行。
+		Queues: map[string]river.QueueConfig{
+			river.QueueDefault: {MaxWorkers: 1},
+			QueueStability:     {MaxWorkers: 1},
+		},
 		Workers: workers,
 		Logger:  log.WithGroup("river"),
 		// 停机时给在跑任务 5s 收尾，超时取消其 ctx 硬停；
@@ -81,6 +94,16 @@ func (c *Client) EnqueueQualityTaskTx(ctx context.Context, tx pgx.Tx, taskID uui
 	res, err := c.river.InsertTx(ctx, tx, QualityArgs{TaskID: taskID}, nil)
 	if err != nil {
 		return 0, fmt.Errorf("任务入队: %w", err)
+	}
+	return res.Job.ID, nil
+}
+
+// EnqueueStabilityTaskTx 在调用方事务里入队稳定性任务，返回 river job ID。
+// 与 CreateTask 同一事务；StabilityArgs.InsertOpts 把它路由到 stability 队列。
+func (c *Client) EnqueueStabilityTaskTx(ctx context.Context, tx pgx.Tx, taskID uuid.UUID) (int64, error) {
+	res, err := c.river.InsertTx(ctx, tx, StabilityArgs{TaskID: taskID}, nil)
+	if err != nil {
+		return 0, fmt.Errorf("稳定性任务入队: %w", err)
 	}
 	return res.Job.ID, nil
 }
