@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import { KeyRound, LogIn } from 'lucide-react'
@@ -25,11 +25,25 @@ export default function LoginPage() {
 
   // 飞书回调失败会跳回 /login?error=…；渲染期直接取，不用 effect 同步 state
   const error = formError ?? searchParams.get('error')
+  const next = searchParams.get('next') ?? '/'
+
 
   // 登录方式由后端配置决定：没配飞书就只出密码表单，配了就以飞书为主入口
   const methods = useQuery({ queryKey: ['authMethods'], queryFn: authApi.methods })
   const feishuEnabled = methods.data?.feishu ?? false
   const passwordEnabled = methods.data?.password ?? true
+
+  // 免登：配了飞书就直接跳授权页，已登录飞书的人全程无感，不用点这一下。
+  // 三种情况不自动跳，否则要么死循环要么管理员进不来：
+  //   error  —— 上一次回调失败了，再跳一次只会再失败一次
+  //   manual —— 刚点过退出登录（否则「退出」等于没反应），或管理员主动要密码入口
+  //   已展开密码表单 —— 用户正在手动登录
+  const autoLogin = feishuEnabled && !error && !searchParams.has('manual') && !passwordOpen
+
+  useEffect(() => {
+    if (!autoLogin) return
+    window.location.replace(authApi.feishuLoginUrl(next))
+  }, [autoLogin, next])
 
   // 上一次失败的提示不该盖住这一次操作的结果，动手前先把它从地址栏抹掉
   function clearCallbackError() {
@@ -46,7 +60,7 @@ export default function LoginPage() {
     clearCallbackError()
     try {
       await authApi.login(String(form.get('username') ?? ''), String(form.get('password') ?? ''))
-      navigate('/', { replace: true })
+      navigate(next, { replace: true })
     } catch (err) {
       setFormError(err instanceof RequestError ? err.message : t('login.networkError'))
     } finally {
@@ -56,6 +70,17 @@ export default function LoginPage() {
 
   // 只有密码一种方式时不必折叠，直接展开
   const showPasswordForm = passwordEnabled && (!feishuEnabled || passwordOpen)
+
+  // 正在跳飞书（以及方式还没探测出来）时不闪登录卡片，只留一行提示
+  if (methods.isPending || autoLogin) {
+    return (
+      <div className="flex min-h-svh items-center justify-center bg-muted/40 p-6">
+        <p className="text-sm text-muted-foreground">
+          {methods.isPending ? '' : t('login.redirecting')}
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-svh items-center justify-center bg-muted/40 p-6">
@@ -73,7 +98,7 @@ export default function LoginPage() {
               className="w-full"
               onClick={() => {
                 clearCallbackError()
-                window.location.assign(authApi.feishuLoginUrl)
+                window.location.assign(authApi.feishuLoginUrl(next))
               }}
             >
               <LogIn />

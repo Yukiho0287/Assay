@@ -83,8 +83,12 @@ export const systemApi = {
 
 export const authApi = {
   methods: () => request<AuthMethods>('/api/auth/methods'),
-  // 飞书登录整程由后端接管：这里只做整页跳转，授权码不经过前端
-  feishuLoginUrl: '/api/auth/feishu/authorize',
+  // 飞书登录整程由后端接管：这里只做整页跳转，授权码不经过前端。
+  // next 是登录后要回到的站内路径，服务端会校验只放行相对路径。
+  feishuLoginUrl: (next?: string) =>
+    next && next !== '/'
+      ? `/api/auth/feishu/authorize?next=${encodeURIComponent(next)}`
+      : '/api/auth/feishu/authorize',
   login: (username: string, password: string) =>
     request<void>('/api/auth/login', {
       method: 'POST',

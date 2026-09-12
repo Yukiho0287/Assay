@@ -1185,7 +1185,10 @@ export interface operations {
     };
     feishuAuthorize: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 登录成功后要回到的站内路径（如 /quality/abc）。只接受以单个 / 开头的相对路径， 其余一律忽略并回落到首页——防开放重定向。 */
+                next?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;

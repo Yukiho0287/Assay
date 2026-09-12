@@ -773,6 +773,12 @@ type NotFound = Error
 // Unauthorized defines model for Unauthorized.
 type Unauthorized = Error
 
+// FeishuAuthorizeParams defines parameters for FeishuAuthorize.
+type FeishuAuthorizeParams struct {
+	// Next 登录成功后要回到的站内路径（如 /quality/abc）。只接受以单个 / 开头的相对路径， 其余一律忽略并回落到首页——防开放重定向。
+	Next *string `form:"next,omitempty" json:"next,omitempty"`
+}
+
 // FeishuCallbackParams defines parameters for FeishuCallback.
 type FeishuCallbackParams struct {
 	// Code 授权码，5 分钟有效且仅可用一次
@@ -859,7 +865,7 @@ type UpdateUserJSONRequestBody = UserUpdate
 type ServerInterface interface {
 	// FeishuAuthorize 跳转飞书授权页（下发一次性 state Cookie 防 CSRF）
 	// (GET /auth/feishu/authorize)
-	FeishuAuthorize(w http.ResponseWriter, r *http.Request)
+	FeishuAuthorize(w http.ResponseWriter, r *http.Request, params FeishuAuthorizeParams)
 	// FeishuCallback 飞书授权回调：换取用户身份、建立会话后跳回首页
 	// (GET /auth/feishu/callback)
 	FeishuCallback(w http.ResponseWriter, r *http.Request, params FeishuCallbackParams)
@@ -988,8 +994,27 @@ type MiddlewareFunc func(http.Handler) http.Handler
 // FeishuAuthorize operation middleware
 func (siw *ServerInterfaceWrapper) FeishuAuthorize(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params FeishuAuthorizeParams
+
+	// ------------- Optional query parameter "next" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "next", r.URL.Query(), &params.Next, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "next"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "next", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.FeishuAuthorize(w, r)
+		siw.Handler.FeishuAuthorize(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
