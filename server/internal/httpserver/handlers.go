@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,7 +43,7 @@ type handlers struct {
 
 	fs           *feishu.Client // nil = 未配置飞书登录
 	localLogin   bool           // 是否放行用户名密码登录（管理员兜底通道）
-	cookieSecure bool           // 会话 Cookie 是否带 Secure
+	cookieSecure bool           // 强制所有会话 Cookie 带 Secure（不管请求走的什么协议）
 }
 
 var _ api.ServerInterface = (*handlers)(nil)
@@ -144,6 +145,17 @@ func (h *handlers) Login(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// secureCookie 判定本次响应的 Cookie 该不该带 Secure。
+// 配置项为强制开关；否则看请求实际是不是 HTTPS —— 直连是 r.TLS，
+// 经 CDN/反代则看 X-Forwarded-Proto。伪造这个头只会让伪造者自己的 Cookie 发不出去，
+// 不构成风险，所以不必校验来源。
+func (h *handlers) secureCookie(r *http.Request) bool {
+	if h.cookieSecure || r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
 // issueSession 写会话行并下发 Cookie；失败时已向 w 写过 500，调用方直接返回。
 // 密码登录与飞书登录共用同一套会话机制，登录方式不影响会话行为。
 func (h *handlers) issueSession(w http.ResponseWriter, r *http.Request, userID uuid.UUID) bool {
@@ -168,7 +180,7 @@ func (h *handlers) issueSession(w http.ResponseWriter, r *http.Request, userID u
 		Path:     "/",
 		MaxAge:   int(sessionTTL.Seconds()),
 		HttpOnly: true,
-		Secure:   h.cookieSecure,
+		Secure:   h.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	return true
@@ -187,7 +199,7 @@ func (h *handlers) Logout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   h.cookieSecure,
+		Secure:   h.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	w.WriteHeader(http.StatusNoContent)

@@ -47,7 +47,7 @@ func (h *handlers) FeishuAuthorize(w http.ResponseWriter, r *http.Request) {
 		Path:     oauthStatePath,
 		MaxAge:   int(oauthStateTTL.Seconds()),
 		HttpOnly: true,
-		Secure:   h.cookieSecure,
+		Secure:   h.secureCookie(r),
 		SameSite: http.SameSiteLaxMode, // 顶层 GET 跳转回来时仍会携带
 	})
 	http.Redirect(w, r, h.fs.AuthorizeURL(state), http.StatusFound)
@@ -56,7 +56,7 @@ func (h *handlers) FeishuAuthorize(w http.ResponseWriter, r *http.Request) {
 // FeishuCallback 飞书授权回调：校验 state → 换身份 → 建号/更新 → 签发会话 → 跳首页。
 // 全程在后端完成，授权码不经过前端 JS。
 func (h *handlers) FeishuCallback(w http.ResponseWriter, r *http.Request, params api.FeishuCallbackParams) {
-	h.clearOAuthState(w)
+	h.clearOAuthState(w, r)
 
 	if h.fs == nil {
 		h.loginFailed(w, r, "本站未配置飞书登录", nil)
@@ -104,14 +104,14 @@ func (h *handlers) stateMatches(r *http.Request, got *string) bool {
 	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(*got)) == 1
 }
 
-func (h *handlers) clearOAuthState(w http.ResponseWriter) {
+func (h *handlers) clearOAuthState(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     oauthStateCookie,
 		Value:    "",
 		Path:     oauthStatePath,
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   h.cookieSecure,
+		Secure:   h.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
