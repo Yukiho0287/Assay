@@ -41,7 +41,11 @@ func New(addr string, log *slog.Logger, pool *pgxpool.Pool, gh *update.Client, t
 		log: log, q: db.New(pool), pool: pool, gh: gh, tq: tq, broker: broker,
 		fs: ao.Feishu, localLogin: ao.LocalLogin, cookieSecure: ao.CookieSecure,
 	}
-	api.HandlerFromMuxWithBaseURL(h, mux, "/api")
+	apiMux := http.NewServeMux()
+	api.HandlerFromMux(h, apiMux)
+	// 接口响应一律不缓存：前面挂 CDN 时，缓存住 /auth/me 这类响应会直接串号。
+	// 放在源站而不是 CDN 配置里——换任何 CDN、任何拓扑都成立，不依赖谁的默认策略。
+	mux.Handle("/api/", http.StripPrefix("/api", noStore(apiMux)))
 	if wh := web.Handler(); wh != nil {
 		// 发布构建内嵌前端：非 /api 路径全部交给 SPA
 		mux.Handle("/", wh)
@@ -87,6 +91,14 @@ func (s *Server) Run(ctx context.Context, ln net.Listener) error {
 		defer cancel()
 		return s.http.Shutdown(shutdownCtx)
 	}
+}
+
+// noStore 给所有接口响应打上不可缓存标记
+func noStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
