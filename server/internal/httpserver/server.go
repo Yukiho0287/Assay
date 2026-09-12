@@ -15,6 +15,7 @@ import (
 
 	"github.com/Yukiho0287/assay/server/internal/api"
 	"github.com/Yukiho0287/assay/server/internal/db"
+	"github.com/Yukiho0287/assay/server/internal/feishu"
 	"github.com/Yukiho0287/assay/server/internal/tasks"
 	"github.com/Yukiho0287/assay/server/internal/update"
 	"github.com/Yukiho0287/assay/server/internal/web"
@@ -26,10 +27,20 @@ type Server struct {
 	broker *taskEventBroker
 }
 
-func New(addr string, log *slog.Logger, pool *pgxpool.Pool, gh *update.Client, tq *tasks.Client) *Server {
+// AuthOptions 登录相关装配项：fs 为 nil 表示不启用飞书登录
+type AuthOptions struct {
+	Feishu       *feishu.Client
+	LocalLogin   bool
+	CookieSecure bool
+}
+
+func New(addr string, log *slog.Logger, pool *pgxpool.Pool, gh *update.Client, tq *tasks.Client, ao AuthOptions) *Server {
 	mux := http.NewServeMux()
 	broker := newTaskEventBroker(pool, log)
-	h := &handlers{log: log, q: db.New(pool), pool: pool, gh: gh, tq: tq, broker: broker}
+	h := &handlers{
+		log: log, q: db.New(pool), pool: pool, gh: gh, tq: tq, broker: broker,
+		fs: ao.Feishu, localLogin: ao.LocalLogin, cookieSecure: ao.CookieSecure,
+	}
 	api.HandlerFromMuxWithBaseURL(h, mux, "/api")
 	if wh := web.Handler(); wh != nil {
 		// 发布构建内嵌前端：非 /api 路径全部交给 SPA

@@ -1,6 +1,8 @@
 import type { components } from '@/api/schema'
 
 export type CurrentUser = components['schemas']['CurrentUser']
+export type AuthMethods = components['schemas']['AuthMethods']
+export type AuthSource = components['schemas']['AuthSource']
 export type VersionInfo = components['schemas']['VersionInfo']
 export type PermissionMap = components['schemas']['PermissionMap']
 export type User = components['schemas']['User']
@@ -80,6 +82,9 @@ export const systemApi = {
 }
 
 export const authApi = {
+  methods: () => request<AuthMethods>('/api/auth/methods'),
+  // 飞书登录整程由后端接管：这里只做整页跳转，授权码不经过前端
+  feishuLoginUrl: '/api/auth/feishu/authorize',
   login: (username: string, password: string) =>
     request<void>('/api/auth/login', {
       method: 'POST',
