@@ -20,6 +20,21 @@ import (
 // feishuDefaultRole 自动建号时授予的角色：内置 member（无用户管理与系统设置权限）
 const feishuDefaultRole = "member"
 
+// oauthNextCookie 记住登录前想去的站内路径，回调后跳回去（深链接不丢）
+const oauthNextCookie = "assay_oauth_next"
+
+// safeNext 只放行站内相对路径，挡开放重定向。
+// 必须以单个 / 开头：`//evil.com` 和 `/\evil.com` 都会被浏览器当成协议相对 URL 跳到外站。
+func safeNext(v string) string {
+	if len(v) < 1 || v[0] != '/' {
+		return ""
+	}
+	if len(v) > 1 && (v[1] == '/' || v[1] == '\\') {
+		return ""
+	}
+	return v
+}
+
 // GetAuthMethods 登录页据此决定渲染哪些入口，未登录可访问。
 func (h *handlers) GetAuthMethods(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, api.AuthMethods{
@@ -29,7 +44,7 @@ func (h *handlers) GetAuthMethods(w http.ResponseWriter, _ *http.Request) {
 }
 
 // FeishuAuthorize 下发一次性 state Cookie 后跳转飞书授权页。
-func (h *handlers) FeishuAuthorize(w http.ResponseWriter, r *http.Request) {
+func (h *handlers) FeishuAuthorize(w http.ResponseWriter, r *http.Request, params api.FeishuAuthorizeParams) {
 	if h.fs == nil {
 		writeJSON(w, http.StatusServiceUnavailable, api.Error{Error: "本站未配置飞书登录"})
 		return
@@ -49,6 +64,20 @@ func (h *handlers) FeishuAuthorize(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   h.secureCookie(r),
 		SameSite: http.SameSiteLaxMode, // 顶层 GET 跳转回来时仍会携带
+	})
+	// 登录前想去哪，存 Cookie 而不是塞进 state——state 要参与恒定时间比对，不宜承载可变数据
+	next := ""
+	if params.Next != nil {
+		next = safeNext(*params.Next)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     oauthNextCookie,
+		Value:    next,
+		Path:     oauthStatePath,
+		MaxAge:   int(oauthStateTTL.Seconds()),
+		HttpOnly: true,
+		Secure:   h.secureCookie(r),
+		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, h.fs.AuthorizeURL(state), http.StatusFound)
 }
@@ -92,7 +121,14 @@ func (h *handlers) FeishuCallback(w http.ResponseWriter, r *http.Request, params
 		return // issueSession 已写过 500
 	}
 	h.log.Info("用户登录", "username", info.Name, "method", "feishu", "union_id", info.UnionID)
-	http.Redirect(w, r, "/", http.StatusFound)
+	// 再校验一次：Cookie 可能被改，绝不拿它的值直接跳转
+	dest := "/"
+	if c, err := r.Cookie(oauthNextCookie); err == nil {
+		if n := safeNext(c.Value); n != "" {
+			dest = n
+		}
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
 }
 
 // stateMatches 恒定时间比对回调 state 与 Cookie 中的一次性随机串
@@ -105,15 +141,17 @@ func (h *handlers) stateMatches(r *http.Request, got *string) bool {
 }
 
 func (h *handlers) clearOAuthState(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     oauthStateCookie,
-		Value:    "",
-		Path:     oauthStatePath,
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   h.secureCookie(r),
-		SameSite: http.SameSiteLaxMode,
-	})
+	for _, name := range []string{oauthStateCookie, oauthNextCookie} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     oauthStatePath,
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   h.secureCookie(r),
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 }
 
 // loginFailed 回调失败一律跳回登录页并把原因带在 query 上；
